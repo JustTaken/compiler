@@ -1,221 +1,315 @@
 const std = @import("std");
 const Vec = @import("collections.zig").Vec;
+const FixedVec = @import("collections.zig").FixedVec;
 const Iter = @import("collections.zig").Iter;
 const Token = @import("tokenizer.zig").Token;
 
 const Allocator = std.mem.Allocator;
 
 const NodeType = enum {
+    VariableName,
+    Type,
+    Symbol,
+    Mut,
+    Literal,
+
     Root,
     Function,
+    FunctionName,
     FunctionParameters,
     FunctionBody,
     Parameter,
     Let,
+    Switch,
+    SwitchBody,
+    SwitchCase,
+    Expression,
     Return,
-};
 
-const ExpressionType = enum {
-    Type,
-    Name,
-    Symbol,
-    Value,
-    Literal,
-    Keyword,
-};
-
-const Expression = struct {
-    token: Token,
-    typ: ExpressionType,
-
-    fn init(token: *const Token, typ: ExpressionType) Expression {
-        return Expression {
-            .typ = typ,
-            .token = Token {
-                .id = token.id,
-                .value = token.value,
-            },
-        };
-    }
 };
 
 pub const Node = struct {
     childs: Vec(Node),
-    expressions: Vec(Expression),
+    token: Token,
     parent: ?*Node,
     typ: NodeType,
+    next_child: u32,
 
     fn init(
-        typ: NodeType, 
-        parent: ?*Node, 
-        len: u32, 
+        typ: NodeType,
+        token: *const Token,
+        parent: ?*Node,
+        len: u32,
         allocator: Allocator
     ) !Node {
          return Node {
-            .childs = try Vec(Node).init(len + 1, allocator),
-            .expressions = try Vec(Expression).init(4, allocator),
+            .childs = if (len == 0) undefined else try Vec(Node).init(len, allocator),
+            .token = Token {
+                .id = token.id,
+                .value = token.value,
+            },
             .parent = parent,
-            .typ = typ,
+             .typ = typ,
+             .next_child = 0,
         };
+    }
+
+    fn childless(self: *const Node) bool {
+        switch (self.typ) {
+            .VariableName, .FunctionName, .Type, .Symbol, .Mut => return true,
+            .Expression => return self.token.id == .String,
+            else => {},
+        }
+
+        return false;
+    }
+
+    pub fn get_literal(self: *Node) ?[]const u8 {
+        for (self.childs.items) |child| {
+            if (child.typ == .Expression and child.token.typ == .Number) return child.token.value;
+        }
+    }
+
+    fn reajust(self: *Node) void {
+        for (self.childs.items) |*child| {
+            if (child.childless()) continue;
+
+            for (child.childs.items) |*grand_child| {
+                grand_child.parent = child;
+            }
+        }
+    }
+
+    fn push_zero(self: *Node, typ: NodeType, token: *const Token) !void {
+        if (try self.childs.flagged_push(try init(typ, token, self, 0, self.childs.allocator))) self.reajust();
+    }
+
+    fn push_child(self: *Node, typ: NodeType, token: *const Token, len: u32) !?*Node {
+        if (try self.childs.flagged_push(try init(typ, token, self, len, self.childs.allocator))) self.reajust();
+        return self.childs.last_mut() catch unreachable;
     }
 
     fn push(self: *Node, token: *const Token) !?*Node {
         switch (self.typ) {
             .Root => {
                 switch (token.id) {
-                    .Function => {
-                        try self.childs.push(try init(.Function, self, 2, self.childs.allocator));
-                        return self.childs.last_mut() catch unreachable;
-                    },
+                    .Function => return try self.push_child(.Function, token, 4),
+                    .CurlyBracketClose => return self,
                     else => return null,
                 }
             },
             .Function => {
                 switch (token.id) {
                     .Identifier => {
-                        if (self.last()) |exp| {
-                            if (exp.token.id == .AssignArrow) {
-                                try self.expressions.push(Expression.init(token, .Type));
-                            } else return error.ExpressionNotSupported;
+                        if (self.childs.len() == 0) {
+                            try self.push_zero(.FunctionName, token);
                         } else {
-                            try self.expressions.push(Expression.init(token, .Name));
+                            const child = try self.childs.last();
+
+                            if (child.token.id == .DoubleColon) try self.push_zero(.Type, token)
+                            else return error.InvalidToken;
                         }
                     },
-                    .ParentesisOpen => {
-                        try self.expressions.push(Expression.init(token, .Symbol));
-                        try self.childs.push(try init(.FunctionParameters, self, 3, self.childs.allocator));
-
-                        return self.childs.last_mut() catch unreachable;
-                    },
-                    .ParentesisClose => try self.expressions.push(Expression.init(token, .Symbol)),
-                    .AssignArrow => try self.expressions.push(Expression.init(token, .Symbol)),
-                    .CurlyBracketOpen =>  {
-                        try self.expressions.push(Expression.init(token, .Symbol));
-                        try self.childs.push(try init(.FunctionBody, self, 3, self.childs.allocator));
-
-                        return self.childs.last_mut() catch unreachable;
-                    },
-                    .CurlyBracketClose => try self.expressions.push(Expression.init(token, .Symbol)),
-                    else => return null,
+                    .ParentesisOpen => return try self.push_child(.FunctionParameters, token, 2),
+                    .ParentesisClose => {},
+                    .DoubleColon => try self.push_zero(.Symbol, token),
+                    .CurlyBracketOpen => return try self.push_child(.FunctionBody, token, 3),
+                    .CurlyBracketClose => return null,
+                    else => return error.InvalidToken,
                 }
             },
             .FunctionParameters => {
                 switch (token.id) {
-                    .Colon => {
-                        try self.expressions.push(Expression.init(token, .Symbol));
-                        try self.childs.push(try init(.Parameter, self, 1, self.childs.allocator));
-                        return self.childs.last_mut() catch unreachable;
-                    },
-                    .Identifier => {
-                        try self.childs.push(try init(.Parameter, self, 1, self.childs.allocator));
-                        const child = self.childs.last_mut() catch unreachable;
-                        return try child.push(token);
-                    },
-                    else => return null,
+                    .Colon => try self.push_zero(.Symbol, token),
+                    .Identifier => return try self.push_child(.Parameter, token, 1),
+                    .ParentesisClose => return null,
+                    else => return error.InvalidToken,
                 }
             },
             .Parameter => {
                 switch (token.id) {
-                    .DoubleColon => try self.expressions.push(Expression.init(token, .Symbol)),
-                    .Identifier => {
-                        if (self.last()) |exp| {
-                            if (exp.token.id == .DoubleColon) try self.expressions.push(Expression.init(token, .Type))
-                            else return error.ExpressionNotSupported;
-                        } else try self.expressions.push(Expression.init(token, .Name));
+                    .DoubleColon => {
+                        try self.push_zero(.Symbol, token);
                     },
-                    else => return null,
+                    .Identifier => {
+                        if (self.childs.len() == 0) return error.InvalidToken;
+
+                        const child = try self.childs.last();
+                        if (child.token.id != .DoubleColon) return error.InvalidToken;
+                        try self.push_zero(.Type, token);
+                    },
+                    .ParentesisClose, .Colon => return null,
+                    else => return error.InvalidToken,
                 }
             },
             .FunctionBody => {
                 switch (token.id) {
-                    .Return => {
-                        try self.childs.push(try init(.Return, self, 3 , self.childs.allocator));
-                        return self.childs.last_mut() catch unreachable;
-                    },
-                    .Let => {
-                        try self.childs.push(try init(.Let, self, 3, self.childs.allocator));
-                        return self.childs.last_mut() catch unreachable;
-                    },
-                    else => return null,
+                    .Return => return try self.push_child(.Return, token, 2),
+                    .Let => return try self.push_child(.Let, token, 3),
+                    .Switch => return try self.push_child(.Switch, token, 2),
+                    .SemiColon => {},
+                    .CurlyBracketClose => return null,
+                    else => return error.InvalidToken,
                 }
             },
             .Let => {
                 switch (token.id) {
-                    .Mut => try self.expressions.push(Expression.init(token, .Keyword)),
-                    .Equal => try self.expressions.push(Expression.init(token, .Symbol)),
-                    .Number => try self.expressions.push(Expression.init(token, .Literal)),
-                    .String => try self.expressions.push(Expression.init(token, .Literal)),
-                    .DoubleQuote => try self.expressions.push(Expression.init(token, .Symbol)),
-                    .Identifier => {
-                        if (self.last()) |exp| {
-                            if (exp.token.id == .Mut) try self.expressions.push(Expression.init(token, .Name))
-                            else return error.ExpressionNotSupported;
-                        } else try self.expressions.push(Expression.init(token, .Name));
+                    .Mut => try self.push_zero(.Mut, token),
+                    .Equal => {
+                        const child = try self.childs.last();
+                        if (child.token.id == .Identifier) try self.push_zero(.Symbol, token)
+                        else return error.InvalidToken;
                     },
-                    .SemiColon => try self.expressions.push(Expression.init(token, .Symbol)),
-                    else => return null,
+                    .Number => {
+                        const child = try self.childs.last();
+                        if (child.token.id == .Equal) return try self.push_child(.Expression, token, 2)
+                        else return error.InvalidToken;
+                    },
+                    .String => try self.push_zero(.Expression, token),
+                    .DoubleColon => try self.push_zero(.Symbol, token),
+                    .Identifier => {
+                        if (self.childs.len() > 1) {
+                            const child = try self.childs.last();
+
+                            if (child.token.id == .Mut) try self.push_zero(.VariableName, token)
+                            else if (child.token.id == .DoubleColon) try self.push_zero(.Type, token)
+                            else if (child.token.id == .Equal) return try self.push_child(.Expression, token, 1)
+                            else return error.InvalidToken;
+                        } else {
+                            try self.push_zero(.VariableName, token);
+                        }
+                    },
+                    .DoubleQuote => {},
+                    .SemiColon => return null,
+                    else => return error.InvalidToken,
                 }
             },
             .Return => {
                 switch (token.id) {
-                    .Identifier => try self.expressions.push(Expression.init(token, .Value)),
-                    .Number => try self.expressions.push(Expression.init(token, .Literal)),
-                    .String => try self.expressions.push(Expression.init(token, .Literal)),
-                    .SemiColon => try self.expressions.push(Expression.init(token, .Symbol)),
-                    .DoubleQuote => try self.expressions.push(Expression.init(token, .Symbol)),
-                    else => return null,
+                    .Identifier, .Number => return try self.push_child(.Expression, token, 2),
+                    .String => try self.push_zero(.Expression, token),
+                    .DoubleQuote => {},
+                    .SemiColon => return null,
+                    else => return error.InvalidToken,
                 }
-            }
+            },
+            .Expression => {
+                switch (token.id) {
+                    .Identifier, .Number => {
+                        if (self.childs.len() == 0) return error.InvalidToken;
+
+                        const last = try self.childs.last();
+                        if (!last.token.id.is_binary_operator()) return error.InvalidToken;
+                        return try self.push_child(.Expression, token, 1);
+                    },
+                    .Sum, .Multiplication => try self.push_zero(.Symbol, token),
+                    .SemiColon => return null,
+                    else => return error.InvalidToken,
+                }
+            },
+            .Switch => {
+                switch (token.id) {
+                    .Identifier => try self.push_zero(.VariableName, token),
+                    .CurlyBracketOpen => return try self.push_child(.SwitchBody, token, 3),
+                    .CurlyBracketClose => return self.parent,
+                    else => return error.InvalidToken,
+                }
+            },
+            .SwitchBody => {
+                switch (token.id) {
+                    .Number, .Identifier => return try self.push_child(.SwitchCase, token, 2),
+                    .SemiColon => {},
+                    .CurlyBracketClose => return null,
+                    else => return error.InvalidToken,
+                }
+            },
+            .SwitchCase => {
+                switch (token.id) {
+                    .Equal => {
+                        if (self.childs.len() != 0) return error.InvalidToken
+                        else try self.push_zero(.Symbol, token);
+                    },
+                    .Number, .Identifier => return try self.push_child(.Expression, token, 1),
+                    .SemiColon => return null,
+                    else => return error.InvalidToken,
+                }
+            },
+
+            else => unreachable,
         }
 
         return self;
     }
 
-    fn get_parent(self: *Node) ?*Node {
-        return self.parent;
+    pub fn next(self: *Node) ?*Node {
+        var current_node: ?*Node = self;
+        if (self.childless()) current_node = self.parent;
+
+        while (current_node) |node| {
+            current_node = node.childs.get_mut(node.next_child) catch {
+                current_node = node.parent;
+                continue;
+            };
+
+            node.next_child += 1;
+            return current_node;
+        }
+
+        return null;
     }
 
     fn iter(self: *const Node, f: fn (*const Node) void ) void {
-        f(self);
         for (self.childs.items) |child| {
             child.iter(f);
         }
-    }
 
-    fn last(self: *const Node) ?*const Expression {
-        return self.expressions.last() catch null;
+        f(self);
     }
 };
 
-pub fn parse(tokens: Vec(Token), allocator: Allocator) !Node {
-    var iter = tokens.iter();
-    var root = try Node.init(.Root, null, 5, allocator);
-    var current_node: *Node = &root;
+pub const Tree = struct {
+    root: *Node,
+    allocator: Allocator,
 
-    out: while (iter.next()) |token| {
-        while (true) {
-            if (try current_node.push(token)) |node| {
-                current_node = node;
-                break;
+    pub fn init(tokens: Vec(Token), allocator: Allocator) !Tree {
+        var iter = tokens.iter();
+        const root = try allocator.create(Node);
+        root.* = try Node.init(.Root, &Token { .id = .Root, .value = null }, null, 2, allocator);
+        var current_node: *Node = root;
+
+        out: while (iter.next()) |token| {
+            while (true) {
+                if (try current_node.push(token)) |node| {
+                    current_node = node;
+                    break;
+                }
+
+                current_node = current_node.parent orelse break :out;
             }
-
-            current_node = current_node.parent orelse break :out;
         }
+
+        return Tree {
+            .root = root,
+            .allocator = allocator,
+        };
     }
 
-    root.iter(print);
+    pub fn deinit(self: *const Tree) void {
+        self.root.iter(free);
+        self.allocator.destroy(self.root);
+    }
+};
 
-    return root;
+fn free(node: *const Node) void {
+    switch (node.typ) {
+        .VariableName, .FunctionName, .Type, .Symbol, .Mut => return,
+        .Expression => if (node.token.id == .String) return,
+        else => {}
+    }
+
+    node.childs.deinit();
 }
 
 fn print(node: *const Node) void {
-    std.debug.print("node: {}\n", .{node.typ});
-
-    for (node.expressions.items) |exp| {
-        if (exp.token.value) |v| {
-            std.debug.print("{} : {s} -> {}\n", .{exp.token.id, v, exp.typ});
-        } else {
-            std.debug.print("{} -> {}\n", .{exp.token.id, exp.typ});
-        }
-    }
+    std.debug.print("node: {} | {}\n", .{node.typ, node.token.id});
 }

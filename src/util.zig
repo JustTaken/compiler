@@ -22,6 +22,14 @@ pub fn eql(one: []const u8, two: []const u8) bool {
     return true;
 }
 
+pub fn is_number(string: []const u8) bool {
+    for (string) |c| {
+        if (c < '0' or c > '9') return false;
+    }
+
+    return true;
+}
+
 pub fn min(one: usize, two: usize) u32 {
     if (one < two) return @intCast(one);
     return @intCast(two);

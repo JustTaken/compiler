@@ -1,7 +1,8 @@
 const std = @import("std");
 const util =  @import("util.zig");
 const tokenizer = @import("tokenizer.zig");
-const parser = @import("parser.zig");
+const Tree = @import("parser.zig").Tree;
+const generator = @import("generator.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}) {};
@@ -13,6 +14,9 @@ pub fn main() !void {
     const tokens = try tokenizer.init(content, allocator);
     defer tokens.deinit();
 
-    const node = try parser.parse(tokens, allocator);
-    _ = node;
+    var tree = try Tree.init(tokens, allocator);
+    defer tree.deinit();
+
+    const assembly = try generator.init(&tree, allocator);
+    defer assembly.deinit();
 }
