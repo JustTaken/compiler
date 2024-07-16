@@ -25,7 +25,6 @@ const NodeType = enum {
     SwitchCase,
     Expression,
     Return,
-
 };
 
 pub const Node = struct {
@@ -64,18 +63,31 @@ pub const Node = struct {
         return false;
     }
 
-    pub fn get_literal(self: *Node) ?[]const u8 {
-        for (self.childs.items) |child| {
-            if (child.typ == .Expression and child.token.typ == .Number) return child.token.value;
+    pub fn next_expression(self: *Node) ?*Node {
+        for (self.childs.items) |*exp| {
+            if (exp.typ == .Expression) return exp;
         }
+
+        return null;
+    }
+
+    pub fn is_literal(self: *Node) bool {
+        if (self.typ != .Expression) return false;
+        if (self.childs.len() == 0) return self.token.typ == .Number;
+
+        for (self.childs.items) |last| {
+            if (!last.is_literal()) return false;
+        }
+
+        return true;
     }
 
     fn reajust(self: *Node) void {
-        for (self.childs.items) |*child| {
-            if (child.childless()) continue;
+        for (self.childs.items) |*last| {
+            if (last.childless()) continue;
 
-            for (child.childs.items) |*grand_child| {
-                grand_child.parent = child;
+            for (last.childs.items) |*grand_child| {
+                grand_child.parent = last;
             }
         }
     }
@@ -104,9 +116,9 @@ pub const Node = struct {
                         if (self.childs.len() == 0) {
                             try self.push_zero(.FunctionName, token);
                         } else {
-                            const child = try self.childs.last();
+                            const last = try self.childs.last();
 
-                            if (child.token.id == .DoubleColon) try self.push_zero(.Type, token)
+                            if (last.token.id == .DoubleColon) try self.push_zero(.Type, token)
                             else return error.InvalidToken;
                         }
                     },
@@ -134,8 +146,8 @@ pub const Node = struct {
                     .Identifier => {
                         if (self.childs.len() == 0) return error.InvalidToken;
 
-                        const child = try self.childs.last();
-                        if (child.token.id != .DoubleColon) return error.InvalidToken;
+                        const last = try self.childs.last();
+                        if (last.token.id != .DoubleColon) return error.InvalidToken;
                         try self.push_zero(.Type, token);
                     },
                     .ParentesisClose, .Colon => return null,
@@ -156,24 +168,24 @@ pub const Node = struct {
                 switch (token.id) {
                     .Mut => try self.push_zero(.Mut, token),
                     .Equal => {
-                        const child = try self.childs.last();
-                        if (child.token.id == .Identifier) try self.push_zero(.Symbol, token)
+                        const last = try self.childs.last();
+                        if (last.token.id == .Identifier) try self.push_zero(.Symbol, token)
                         else return error.InvalidToken;
                     },
                     .Number => {
-                        const child = try self.childs.last();
-                        if (child.token.id == .Equal) return try self.push_child(.Expression, token, 2)
+                        const last = try self.childs.last();
+                        if (last.token.id == .Equal) return try self.push_child(.Expression, token, 2)
                         else return error.InvalidToken;
                     },
                     .String => try self.push_zero(.Expression, token),
                     .DoubleColon => try self.push_zero(.Symbol, token),
                     .Identifier => {
                         if (self.childs.len() > 1) {
-                            const child = try self.childs.last();
+                            const last = try self.childs.last();
 
-                            if (child.token.id == .Mut) try self.push_zero(.VariableName, token)
-                            else if (child.token.id == .DoubleColon) try self.push_zero(.Type, token)
-                            else if (child.token.id == .Equal) return try self.push_child(.Expression, token, 1)
+                            if (last.token.id == .Mut) try self.push_zero(.VariableName, token)
+                            else if (last.token.id == .DoubleColon) try self.push_zero(.Type, token)
+                            else if (last.token.id == .Equal) return try self.push_child(.Expression, token, 1)
                             else return error.InvalidToken;
                         } else {
                             try self.push_zero(.VariableName, token);
@@ -259,8 +271,8 @@ pub const Node = struct {
     }
 
     fn iter(self: *const Node, f: fn (*const Node) void ) void {
-        for (self.childs.items) |child| {
-            child.iter(f);
+        for (self.childs.items) |last| {
+            last.iter(f);
         }
 
         f(self);

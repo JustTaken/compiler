@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Vec = @import("collections.zig").Vec;
 
 pub fn copy(T: type, src: []const T, dst: []T) void {
     @setRuntimeSafety(false);
@@ -47,4 +48,37 @@ pub fn read_file(path: []const u8, allocator: Allocator) ![]const u8 {
     buffer[end_pos] = '\n';
 
     return buffer;
+}
+
+pub fn hash(string: []const u8) u32 {
+    var h: usize = 0;
+    for (string, 0..) |char, i| {
+        h += char + i;
+    }
+
+    return @intCast(h);
+}
+
+pub fn parse(i: u32, out: *Vec(u8)) !void {
+    var buffer: [20]u8 = undefined;
+
+    var k: u32 = 0;
+    var num = i;
+
+    if (i == 0) {
+        buffer[0] = '0';
+        return;
+    }
+
+    while (num > 0) {
+        const rem: u8 = @intCast(num % 10);
+        buffer[k] = rem + '0';
+
+        k += 1;
+        num /= 10;
+    }
+
+    for (0..k) |index| {
+        try out.push(buffer[k - index - 1]);
+    }
 }

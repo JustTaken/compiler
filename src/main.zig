@@ -18,5 +18,6 @@ pub fn main() !void {
     defer tree.deinit();
 
     const assembly = try generator.init(&tree, allocator);
+    try assembly.write_to_file("teting/test.s", allocator);
     defer assembly.deinit();
 }

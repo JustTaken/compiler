@@ -1,5 +1,6 @@
 const std = @import("std");
-const copy = @import("util.zig").copy;
+const util = @import("util.zig");
+const copy = util.copy;
 
 const Allocator = std.mem.Allocator;
 
@@ -211,6 +212,15 @@ pub fn Vec(T: type) type {
             return self.items;
         }
 
+        pub fn pop(self: *Self) !T {
+            if (self.items.len == 0) return error.OutOfLength;
+
+            const item = self.items[self.items.len - 1];
+            self.items.len -= 1;
+
+            return item;
+        }
+
         pub fn iter(self: *const Self) Iter(T) {
             return Iter(T).init(self);
         }
@@ -276,6 +286,13 @@ pub fn FixedVec(T: type, L: u32) type {
             self.len += 1;
         }
 
+        pub fn extend(self: *Self, items: []const T) !void {
+            if (self.len + items.len >= self.items.len) return error.OutOfLength;
+
+            util.copy(T, items, self.items[self.len..]);
+            self.len += @intCast(items.len);
+        }
+
         pub fn get(self: *Self, index: u32) !*T {
             if (index >= self.len) return error.OutOfLength;
 
@@ -286,6 +303,15 @@ pub fn FixedVec(T: type, L: u32) type {
             if (self.len == 0) return error.OutOfLength;
 
             return &self.items[self.len - 1];
+        }
+
+        pub fn pop(self: *Self) !T {
+            if (self.len == 0) return error.OutOfLength;
+
+            const item = self.items[self.len - 1];
+            self.len -= 1;
+
+            return item;
         }
 
         pub fn elements(self: *const Self) []const T {
