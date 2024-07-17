@@ -1,7 +1,7 @@
 const std = @import("std");
 const util =  @import("util.zig");
 const tokenizer = @import("tokenizer.zig");
-const Tree = @import("parser.zig").Tree;
+const parser = @import("parser.zig");
 const generator = @import("generator.zig");
 
 pub fn main() !void {
@@ -14,10 +14,9 @@ pub fn main() !void {
     const tokens = try tokenizer.init(content, allocator);
     defer tokens.deinit();
 
-    var tree = try Tree.init(tokens, allocator);
-    defer tree.deinit();
+    const root = try parser.init(tokens, allocator);
+    defer allocator.destroy(root);
+    defer root.deinit();
 
-    const assembly = try generator.init(&tree, allocator);
-    try assembly.write_to_file("teting/test.s", allocator);
-    defer assembly.deinit();
+    try generator.init(root, allocator);
 }

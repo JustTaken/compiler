@@ -10,7 +10,7 @@ pub const TokenId = enum {
     Function,
     Let,
     Mut,
-    Switch,
+    Match,
     Return,
     Colon,
     SemiColon,
@@ -57,8 +57,7 @@ pub const Token = struct {
             'f' => if (util.eql("fn", string)) return function(),
             'r' => if (util.eql("return", string)) return ret(),
             'l' => if (util.eql("let", string)) return let(),
-            'm' => if (util.eql("mut", string)) return mut(),
-            's' => if (util.eql("switch", string)) return cases(),
+            'm' => if (util.eql("mut", string)) return mut() else if (util.eql("match", string)) return cases(),
             '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' => if (util.is_number(string)) return number(string),
             else => {},
         }
@@ -70,7 +69,7 @@ pub const Token = struct {
     fn function() Token { return Token { .id = .Function, .value = null }; }
     fn let() Token { return Token { .id = .Let , .value = null }; }
     fn mut() Token { return Token { .id = .Mut , .value = null }; }
-    fn cases() Token { return Token { .id = .Switch, .value = null }; }
+    fn cases() Token { return Token { .id = .Match, .value = null }; }
     fn double_quote() Token { return Token { .id = .DoubleQuote, .value = null }; }
     fn ret() Token { return Token { .id = .Return, .value = null }; }
     fn equal_arrow() Token { return Token { .id = .EqualArrow, .value = null }; }
@@ -116,7 +115,7 @@ pub const Token = struct {
         tokens.push(token) catch unreachable;
 
         return tokens;
-    } 
+    }
 
     // fn greater(string: []const u8) FixedVec(Token, 2) {
     //     if (string.len >= 1) {
@@ -151,7 +150,7 @@ pub fn init(content: []const u8, allocator: Allocator) !Vec(Token){
         flag = false;
 
         switch (char) {
-            ' ', '\n', => if (Token.identifier(content[start..i])) |token| try tokens.push(token), 
+            ' ', '\n', => if (Token.identifier(content[start..i])) |token| try tokens.push(token),
             '{' => try tokens.extend(2, Token.curly_open(content[start..i])),
             '}' => try tokens.extend(2, Token.curly_close(content[start..i])),
             '(' => try tokens.extend(2, Token.paren_open(content[start..i])),
@@ -183,8 +182,8 @@ pub fn init(content: []const u8, allocator: Allocator) !Vec(Token){
                 flag = true;
 
                 if (!concatenating) {
-                    concatenating = true; 
-                    start = i; 
+                    concatenating = true;
+                    start = i;
                 }
             },
         }
