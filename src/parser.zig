@@ -29,16 +29,20 @@ const ExpressionLiteral = struct {
         };
     }
 
-    fn push(self: *Expression, token: *const Token, last: *const Token) void {
+    fn push(self: *Expression, node: *Node) void {
+        _ = self;
+        _ = node;
+    }
+
+    fn push_token(self: *Expression, token: *const Token) void {
         _ = self;
         _ = token;
-        _ = last;
     }
 };
 
 const ExpressionIdentifier = struct {
-    name: []const u8,
     parent: *Node,
+    name: []const u8,
 
     fn init(parent: *Node, name: []const u8) ExpressionIdentifier {
         return ExpressionIdentifier {
@@ -47,16 +51,20 @@ const ExpressionIdentifier = struct {
         };
     }
 
-    fn push(self: *Expression, token: *const Token, last: *const Token) void {
+    fn push(self: *Expression, node: *Node) void {
+        _ = self;
+        _ = node;
+    }
+
+    fn push_token(self: *Expression, token: *const Token) void {
         _ = self;
         _ = token;
-        _ = last;
     }
 };
 
 const ExpressionCall = struct {
-    name: []const u8,
     parent: *Node,
+    name: []const u8,
 
     fn init(parent: *Node, name: []const u8) ExpressionCall {
         return ExpressionCall {
@@ -65,10 +73,14 @@ const ExpressionCall = struct {
         };
     }
 
-    fn push(self: *Expression, token: *const Token, last: *const Token) void {
+    fn push(self: *Expression, node: *Node) void {
+        _ = self;
+        _ = node;
+    }
+
+    fn push_token(self: *Expression, token: *const Token) void {
         _ = self;
         _ = token;
-        _ = last;
     }
 };
 
@@ -87,6 +99,16 @@ const ExpressionBinary = struct {
             .right = right,
         };
     }
+
+    fn push(self: *Expression, node: *Node) void {
+        _ = self;
+        _ = node;
+    }
+
+    fn push_token(self: *Expression, token: *const Token) void {
+        _ = self;
+        _ = token;
+    }
 };
 
 const ExpressionType = enum { literal, identifier, binary, call };
@@ -96,11 +118,11 @@ const Expression = union(ExpressionType) {
     binary: ExpressionBinary,
     call: ExpressionCall,
 
-    fn init(paren: *Node, token: *const Token) error { InvalidToken }!Expression {
+    fn init(paren: *Node, token: *const Token) Expression {
         return switch (token.id) {
-            .Identifier => Expression { .identifier = .{ .parent = paren, .value = token.value.? } },
-            .Number, .String => Expression { .literal = .{ .parent = paren, .value = token.value.? } },
-            else => return error.InvalidToken,
+            .Identifier => Expression { .identifier = .{ .parent = paren, .name = token.value.? } },
+            .Number, .String => Expression { .literal = .{ .parent = paren, .name = token.value.? } },
+            else => unreachable,
         };
     }
 
@@ -122,14 +144,21 @@ const Expression = union(ExpressionType) {
         }
     }
 
-    fn push(self: *Node, token: *const Token, last: *Token) error { InvalidToken }!?*Node {
-        const expression = &self.expression;
+    fn push(self: *Expression, node: *Node) error { InvalidToken }!void {
+        switch (self.*) {
+            .literal => ExpressionLiteral.push(self, node),
+            .identifier => ExpressionIdentifier.push(self, node),
+            .call => ExpressionCall.push(self, node),
+            .binary => ExpressionBinary.push(self, node),
+        }
+    }
 
-        switch (expression) {
-            .literal => ExpressionLiteral.push(expression, token, last),
-            .identifier => ExpressionIdentifier.push(expression, token, last),
-            .call => ExpressionCall.push(expression, token, last),
-            .binary => ExpressionBinary.push(expression, token, last),
+    fn push_token(self: *Expression, token: *const Token) void {
+        switch (self.*) {
+            .literal => ExpressionLiteral.push_token(self, token),
+            .identifier => ExpressionIdentifier.push_token(self, token),
+            .call => ExpressionCall.push_token(self, token),
+            .binary => ExpressionBinary.push_token(self, token),
         }
     }
 };
@@ -143,12 +172,15 @@ const NodeParent = struct {
         };
     }
 
-    fn push(self: *NodeParent, parent: *Node, typ: NodeType) *Node {
+    fn push(self: *NodeParent, parent: *Node, typ: NodeType, token: *const Token) *Node {
         const node = switch (typ) {
             .function => Node {.function = .{ .parent = parent, .handle = NodeParent.init(self.childs.allocator) } },
             .parameter => Node { .parameter = .{ .parent = parent, .handle = NodeParent.init(self.childs.allocator) } },
             .ret => Node { .ret = .{ .parent = parent, .handle = NodeParent.init(self.childs.allocator), } },
             .let => Node { .let = .{ .parent = parent, .handle = NodeParent.init(self.childs.allocator), .mutable = false } },
+            .expression => Node { .expression = Expression.init(parent, token) },
+            .name => Node { .name = Name.init(parent, token.value.?) },
+            .typ => Node { .typ = Type.init(parent, token.value.?) },
             else => unreachable,
         };
 
@@ -180,15 +212,19 @@ const Parameter = struct {
     handle: NodeParent,
 
     fn push(self: *Node, token: *const Token, last: *const Token) error { InvalidToken }!?*Node{
-        const childs = &self.parameter.handle.childs;
+        const handle= &self.parameter.handle;
+
         switch (token.id) {
             .Colon, .ParentesisClose => return null,
             .DoubleColon => {},
             .Identifier => {
-                if (last.id == .DoubleColon) childs.push(Node { .name = Name.init(self, token.value.?) }) catch @panic("out of memory")
-                else if (last.id == .ParentesisOpen or last.id == .Colon) childs.push(Node { .typ = Type.init(self, token.value.?) }) catch @panic("out of memory");
+                if (last.id == .DoubleColon) _ = handle.push(self, .typ, token)
+                else if (last.id == .ParentesisOpen or last.id == .Colon) _ = handle.push(self, .name, token);
             },
-            else => return error.InvalidToken,
+            else => {
+                std.debug.print("token: {}\n", .{token});
+                return error.InvalidToken;
+            }
         }
 
         return self;
@@ -201,16 +237,17 @@ const Function = struct {
 
     fn push(self: *Node, token: *const Token, last: *const Token) error { InvalidToken }!?*Node{
         const handle = &self.function.handle;
+
         switch (token.id) {
             .ParentesisClose, .DoubleColon, .CurlyBracketOpen => {},
             .CurlyBracketClose => return null,
-            .ParentesisOpen, .Colon => return handle.push(self, .parameter),
-            .Let => return handle.push(self, .let),
+            .ParentesisOpen, .Colon => return handle.push(self, .parameter, token),
+            .Let => return handle.push(self, .let, token),
             .SemiColon => {},
-            .Return => return handle.push(self, .ret),
+            .Return => return handle.push(self, .ret, token),
             .Identifier => {
-                if (last.id == .DoubleColon) handle.childs.push(Node { .typ = Type.init(self, token.value.?) }) catch @panic("out of memory")
-                else handle.childs.push(Node { .name = Name.init(self, token.value.?) }) catch @panic("out of memory");
+                if (last.id == .DoubleColon) _ = handle.push(self, .typ, token)
+                else _ = handle.push(self, .name, token);
             },
             else => return error.InvalidToken
         }
@@ -226,15 +263,32 @@ const Let = struct {
 
     fn push(self: *Node, token: *const Token, last: *const Token) error { InvalidToken }!?*Node{
         const handle = &self.let.handle;
+
         switch (token.id) {
             .SemiColon => return null,
             .Mut => self.let.mutable = true,
             .Equal => {},
-            .Identifier, .Number, => {
-                if (last.id == .Mut or handle.childs.len() == 0) handle.childs.push(Node { .name = Name.init(self, token.value.?) }) catch @panic("out of memory")
-                else handle.childs.push(Node { .expression = try Expression.init(self, token) }) catch @panic("out of memory");
+            .Sum, .Multiplication => {
+                const child = handle.childs.last_mut() catch return error.InvalidToken;
+                if (child.* != .expression) return error.InvalidToken;
+                child.expression.push_token(token);
             },
-            else => return error.InvalidToken,
+            .Identifier, .Number, => {
+                if (last.id == .Mut) _ = handle.push(self, .name, token)
+                else {
+                    const current = handle.childs.last_mut() catch {
+                        _ = handle.push(self, .name, token);
+                        return self;
+                    };
+
+                    const child = handle.push(self, .expression, token);
+                    if (current.* == .expression) try current.expression.push(child);
+                }
+            },
+            else => {
+                std.debug.print("token: {}\n", .{token});
+                return error.InvalidToken;
+            }
         }
 
         return self;
@@ -249,7 +303,7 @@ const Return = struct {
         const handle = &self.ret.handle;
         switch (token.id) {
             .SemiColon => return null,
-            .Identifier, .Number, => handle.childs.push(Node { .expression = try Expression.init(self, token) }) catch @panic("out of memory"),
+            .Identifier, .Number, => _ = handle.push(self, .expression,token),
             else => return error.InvalidToken,
         }
 
@@ -262,7 +316,7 @@ const Root = struct {
 
     fn push(self: *Node, token: *const Token, _: *const Token) error { InvalidToken }!?*Node{
         switch (token.id) {
-            .Function => return self.root.handle.push(self, .function),
+            .Function => return self.root.handle.push(self, .function, token),
             else => return error.InvalidToken,
         }
 
