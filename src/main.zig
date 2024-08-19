@@ -17,15 +17,14 @@ pub fn main() !void {
     _ = args.next();
 
     var lexer = Lexer.init(&arena);
-    var parser = Parser.init(&arena);
+    defer lexer.deinit();
 
-    _ = &parser;
+    var parser = Parser.init(&arena);
+    defer parser.reset();
 
     while (args.next()) |arg| {
         lexer.set_path(arg);
         lexer.tokenize();
         parser.parse(&lexer);
     }
-
-    defer lexer.deinit();
 }

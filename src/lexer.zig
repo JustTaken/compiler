@@ -13,11 +13,13 @@ pub const Keyword = enum(u8) {
     Mut,
     Return,
     Match,
+    Struct,
 
     fn from_string(string: []const u8) ?Keyword {
         switch (string[0]) {
             'f' => if (util.eql("fn", string)) return Keyword.Function,
             'r' => if (util.eql("return", string)) return Keyword.Return,
+            's' => if (util.eql("struct", string)) return Keyword.Struct,
             'l' => if (util.eql("let", string)) return Keyword.Let,
             'm' => if (util.eql("mut", string))
                 return Keyword.Mut
@@ -32,6 +34,7 @@ pub const Keyword = enum(u8) {
         switch (string[0]) {
             'f' => return Keyword.Function,
             'r' => return Keyword.Return,
+            's' => return Keyword.Struct,
             'l' => return Keyword.Let,
             'm' => {
                 if (string[1] == 'a') return Keyword.Match;
@@ -256,7 +259,7 @@ pub const Lexer = struct {
             self.state.range.start = 0;
             self.content.len = @intCast(self.state.range.end);
 
-            const buffer = self.content.buffer();
+            const buffer = self.content.items[self.content.len..self.content.capacity];
             self.content.len += @intCast(self.file.read(buffer) catch
                 @panic("could not read from file"));
         }

@@ -8,9 +8,12 @@ const Iter = @import("collections.zig").Iter;
 const Keyword = @import("lexer.zig").Keyword;
 
 const TotalSize = 8192;
-const Count = 8;
+const Count = 9;
 const EachSize = TotalSize / Count;
 
+// Make this relative to the source code, ie: asks to the lexer how
+// many of each are there and create proportional vectors, this would
+// make better usage of memory
 const FunctionSize: u32 = EachSize / @sizeOf(Function);
 const LetSize: u32 = EachSize / @sizeOf(Let);
 const ParameterSize: u32 = EachSize / @sizeOf(Parameter);
@@ -18,6 +21,8 @@ const ExpressionSize: u32 = EachSize / @sizeOf(Expression);
 const BinarySize: u32 = EachSize / @sizeOf(Binary);
 const MatchSize: u32 = EachSize / @sizeOf(Match);
 const MatchBranchSize: u32 = EachSize / @sizeOf(MatchBranch);
+const StructSize: u32 = EachSize / @sizeOf(Struct);
+const StructFieldSize: u32 = EachSize / @sizeOf(StructField);
 
 const ExpressionType = enum(u16) {
     Binary,
@@ -41,10 +46,10 @@ const Binary = struct {
         var self: Binary = undefined;
 
         const left: u16 = @intCast(parser.expression.len);
-        parser.expression.push(Expression.init(
-            first,
-            if (typ == .Literal) .Literal else .Variable,
-        ));
+        parser.expression.push(Expression{
+            .start = first,
+            .typ = if (typ == .Literal) .Literal else .Variable,
+        });
 
         self.start = iter.next().?.start;
         iter.consume();
@@ -52,10 +57,10 @@ const Binary = struct {
         const token = iter.next().?;
 
         const right: u16 = @intCast(parser.expression.len);
-        parser.expression.push(Expression.init(
-            token.start,
-            if (token.id == .Literal) .Literal else .Variable,
-        ));
+        parser.expression.push(Expression{
+            .start = token.start,
+            .typ = if (token.id == .Literal) .Literal else .Variable,
+        });
 
         self.left = left;
         self.right = right;
@@ -76,10 +81,10 @@ const Binary = struct {
         const self_op = TokenId.operator(parser.content.offset(self.start));
 
         const new: u16 = @intCast(parser.expression.len);
-        parser.expression.push(Expression.init(
-            token.start,
-            if (token.id == .Identifier) .Variable else .Literal,
-        ));
+        parser.expression.push(Expression{
+            .start = token.start,
+            .typ = if (token.id == .Identifier) .Variable else .Literal,
+        });
 
         var binary = Binary{
             .start = op,
@@ -97,10 +102,10 @@ const Binary = struct {
             self.start = op;
         } else self.right = @intCast(parser.expression.len);
 
-        parser.expression.push(Expression.init(
-            @intCast(parser.binary.len),
-            .Binary,
-        ));
+        parser.expression.push(Expression{
+            .start = @intCast(parser.binary.len),
+            .typ = .Binary,
+        });
 
         parser.binary.push(binary);
     }
@@ -110,14 +115,12 @@ const Expression = struct {
     start: u16,
     typ: ExpressionType,
 
-    fn init(start: u16, typ: ExpressionType) Expression {
-        return .{
-            .start = start,
-            .typ = typ,
+    fn init(parser: *Parser, iter: *Iter(Token)) Expression {
+        var self = Expression{
+            .start = 0,
+            .typ = .Variable,
         };
-    }
 
-    fn parse(self: *Expression, parser: *Parser, iter: *Iter(Token)) void {
         while (iter.next()) |token| {
             switch (token.id) {
                 .Keyword => break,
@@ -134,10 +137,7 @@ const Expression = struct {
                     self.start = @intCast(parser.expression.len);
                     self.typ = .Expression;
 
-                    var expression = init(0, .Variable);
-                    expression.parse(parser, iter);
-
-                    parser.expression.push(expression);
+                    parser.expression.push(init(parser, iter));
                 },
                 .Operator => {
                     if (self.typ == .Binary) {
@@ -172,6 +172,56 @@ const Expression = struct {
 
             iter.consume();
         }
+
+        return self;
+    }
+};
+
+const StructField = struct {
+    start: u16,
+    typ: u16,
+
+    fn init(iter: *Iter(Token)) StructField {
+        var self = StructField{
+            .start = iter.next().?.start,
+            .typ = 0,
+        };
+
+        iter.consume();
+        iter.consume(); // DoubleColon
+        self.typ = iter.next().?.start;
+        iter.consume();
+
+        return self;
+    }
+};
+
+const Struct = struct {
+    start: u16,
+    fields: u16,
+    count: u16,
+
+    fn init(parser: *Parser, iter: *Iter(Token)) Struct {
+        var self = Struct{
+            .start = iter.next().?.start,
+            .count = 0,
+            .fields = @intCast(parser.struct_field.len),
+        };
+
+        iter.consume();
+        iter.consume(); // CurlyBracketLeft
+
+        while (iter.next()) |token| {
+            if (token.id != .Identifier) break;
+
+            parser.struct_field.push(StructField.init(iter));
+            self.count += 1;
+            iter.consume(); // Colon
+        }
+
+        iter.consume(); // CurlyBracketRight
+
+        return self;
     }
 };
 
@@ -184,14 +234,12 @@ const Let = struct {
     signature: LetSignature,
     expression: u16,
 
-    fn init() Let {
-        return .{
+    fn init(parser: *Parser, iter: *Iter(Token)) Let {
+        var self = Let{
             .signature = LetSignature{ .start = 0, .mutable = false },
             .expression = 0,
         };
-    }
 
-    fn parse(self: *Let, parser: *Parser, iter: *Iter(Token)) void {
         const first = iter.next().?;
         iter.consume();
 
@@ -215,13 +263,12 @@ const Let = struct {
 
         iter.consume(); // Equal
 
-        var expression = Expression.init(0, .Variable);
-        expression.parse(parser, iter);
-
         self.expression = @intCast(parser.expression.len);
-        parser.expression.push(expression);
+        parser.expression.push(Expression.init(parser, iter));
 
         iter.consume(); // SemiColon
+
+        return self;
     }
 };
 
@@ -229,14 +276,12 @@ const Match = struct {
     branch: u16,
     count: u16,
 
-    fn init(parser: *const Parser) Match {
-        return .{
+    fn init(parser: *Parser, iter: *Iter(Token)) Match {
+        var self = Match{
             .branch = @intCast(parser.match_branch.len),
             .count = 0,
         };
-    }
 
-    fn parse(self: *Match, parser: *Parser, iter: *Iter(Token)) void {
         const first = iter.next().?;
 
         switch (first.id) {
@@ -244,45 +289,39 @@ const Match = struct {
                 iter.consume();
                 iter.consume(); // CurlyBracketLeft
 
-                var branch = MatchBranch.init();
-                branch.parse(parser, iter);
-                parser.match_branch.push(branch);
+                parser.match_branch.push(MatchBranch.init(parser, iter));
                 self.count += 1;
             },
             else => @panic("Should not be here"),
         }
 
         iter.consume(); // CurlyBracketRight
+
+        return self;
     }
 };
 
 const MatchBranch = struct {
-    match: u16,
+    start: u16,
     expression: u16,
 
-    fn init() MatchBranch {
-        return .{
-            .match = 0,
+    fn init(parser: *Parser, iter: *Iter(Token)) MatchBranch {
+        var self = MatchBranch{
+            .start = 0,
             .expression = 0,
         };
-    }
 
-    fn parse(self: *MatchBranch, parser: *Parser, iter: *Iter(Token)) void {
-        const name = iter.next().?;
-        if (name.id != .Identifier) @panic("Should not be here");
+        self.start = iter.next().?.start;
         iter.consume();
-
-        self.match = name.start;
         iter.consume(); // Equal
         iter.consume(); // Greater
 
-        var expression = Expression.init(0, .Variable);
-        expression.parse(parser, iter);
-
         self.expression = @intCast(parser.expression.len);
-        parser.expression.push(expression);
+        parser.expression.push(Expression.init(parser, iter));
 
         iter.consume(); // Colon
+
+        return self;
     }
 };
 
@@ -290,14 +329,11 @@ const Parameter = struct {
     name: u16,
     typ: u16,
 
-    fn init() Parameter {
-        return .{
+    fn init(parser: *Parser, iter: *Iter(Token)) Parameter {
+        var self = Parameter{
             .name = 0,
             .typ = 0,
         };
-    }
-
-    fn parse(self: *Parameter, parser: *Parser, iter: *Iter(Token)) void {
         self.name = iter.next().?.start;
         iter.consume();
 
@@ -311,6 +347,8 @@ const Parameter = struct {
         iter.consume();
         self.typ = iter.next().?.start;
         iter.consume();
+
+        return self;
     }
 };
 
@@ -330,15 +368,15 @@ const Matchs = packed struct {
 };
 
 const Function = struct {
-    name: u16,
+    start: u16,
     typ: u16,
     parameters: Parameters,
     matchs: Matchs,
     lets: Lets,
 
-    fn init(parser: *const Parser) Function {
-        return .{
-            .name = 0,
+    fn init(parser: *Parser, iter: *Iter(Token)) Function {
+        var self = Function{
+            .start = 0,
             .typ = 0,
             .matchs = Matchs{
                 .start = @intCast(parser.match.len),
@@ -353,10 +391,8 @@ const Function = struct {
                 .count = 0,
             },
         };
-    }
 
-    fn parse(self: *Function, parser: *Parser, iter: *Iter(Token)) void {
-        self.name = iter.next().?.start;
+        self.start = iter.next().?.start;
         iter.consume();
         iter.consume(); // Parentesis
 
@@ -376,9 +412,7 @@ const Function = struct {
                 }
             }
 
-            var parameter = Parameter.init();
-            parameter.parse(parser, iter);
-            parser.parameter.push(parameter);
+            parser.parameter.push(Parameter.init(parser, iter));
             self.parameters.count += 1;
         }
 
@@ -396,19 +430,17 @@ const Function = struct {
             );
 
             if (.Let == keyword) {
-                var let = Let.init();
-                let.parse(parser, iter);
-                parser.let.push(let);
+                parser.let.push(Let.init(parser, iter));
                 self.lets.count += 1;
             } else if (.Match == keyword) {
-                var match = Match.init(parser);
-                match.parse(parser, iter);
-                parser.match.push(match);
+                parser.match.push(Match.init(parser, iter));
                 self.matchs.count += 1;
             } else @panic("Support more keywords");
         }
 
         iter.consume(); // CurlyBracketRight
+
+        return self;
     }
 };
 
@@ -417,14 +449,17 @@ const Root = struct {
         while (iter.next()) |token| {
             switch (token.id) {
                 .Keyword => {
-                    if (Keyword.Function !=
-                        TokenId.keyword(parser.content.offset(token.start)))
-                        @panic("Should not be here");
-
-                    iter.consume();
-                    var function: Function = Function.init(parser);
-                    function.parse(parser, iter);
-                    parser.function.push(function);
+                    switch (TokenId.keyword(parser.content.offset(token.start))) {
+                        .Function => {
+                            iter.consume();
+                            parser.function.push(Function.init(parser, iter));
+                        },
+                        .Struct => {
+                            iter.consume();
+                            parser.struc.push(Struct.init(parser, iter));
+                        },
+                        else => @panic("Should not be here"),
+                    }
                 },
                 else => @panic("Should not be here"),
             }
@@ -432,17 +467,8 @@ const Root = struct {
     }
 };
 
-const NodeType = enum {
-    Root,
-    Function,
-    Let,
-    Parameter,
-    Expression,
-};
-
 pub const Parser = struct {
     arena: Arena,
-    node: NodeType,
     content: *const Vec(u8),
     function: Vec(Function),
     let: Vec(Let),
@@ -451,6 +477,8 @@ pub const Parser = struct {
     binary: Vec(Binary),
     match: Vec(Match),
     match_branch: Vec(MatchBranch),
+    struc: Vec(Struct),
+    struct_field: Vec(StructField),
 
     pub fn init(arena: *Arena) Parser {
         var self: Parser = undefined;
@@ -464,8 +492,8 @@ pub const Parser = struct {
         self.binary = Vec(Binary).init(BinarySize, &self.arena);
         self.match = Vec(Match).init(MatchSize, &self.arena);
         self.match_branch = Vec(MatchBranch).init(MatchBranchSize, &self.arena);
-
-        self.node = NodeType.Root;
+        self.struc = Vec(Struct).init(StructSize, &self.arena);
+        self.struct_field = Vec(StructField).init(StructFieldSize, &self.arena);
 
         return self;
     }
@@ -475,5 +503,17 @@ pub const Parser = struct {
         var iter = Iter(Token).init(&lexer.tokens);
 
         Root.parse(self, &iter);
+    }
+
+    pub fn reset(self: *Parser) void {
+        self.function.clear();
+        self.let.clear();
+        self.parameter.clear();
+        self.expression.clear();
+        self.binary.clear();
+        self.match.clear();
+        self.match.clear();
+        self.struc.clear();
+        self.struct_field.clear();
     }
 };

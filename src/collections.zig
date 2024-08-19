@@ -32,7 +32,7 @@ pub const Arena = struct {
 
     pub fn free(self: *Arena, T: type, size: u32) void {
         const length = @sizeOf(T) * size;
-        if (length >= self.free) @panic("Arena do not have enough size");
+        if (length > self.free) @panic("Arena do not have enough size");
         self.free -= length;
     }
 };
@@ -73,10 +73,6 @@ pub fn Vec(T: type) type {
             return &self.items[self.len - 1];
         }
 
-        pub fn buffer(self: *Self) []T {
-            return self.items[self.len..self.capacity];
-        }
-
         pub fn offset(self: *const Self, index: u32) []const T {
             return self.items[index..self.len];
         }
@@ -105,10 +101,6 @@ pub fn Iter(T: type) type {
             if (self.current >= self.vec.len) return null;
 
             return &self.vec.items[self.current];
-        }
-
-        pub fn has_next(self: *const Self) bool {
-            return self.current < self.vec.len;
         }
     };
 }
