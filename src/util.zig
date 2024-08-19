@@ -36,18 +36,24 @@ pub fn min(one: usize, two: usize) u32 {
     return @intCast(two);
 }
 
-pub fn read_file(path: []const u8, allocator: Allocator) ![]const u8 {
+pub fn read_file(path: []const u8, buffer: []u8) ![]const u8 {
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
 
     const end_pos = try file.getEndPos();
-    const buffer = try allocator.alloc(u8, end_pos + 1);
 
+    if (buffer.len < end_pos) return error.BufferDoNotHaveEnougthSize;
     if (try file.read(buffer) != end_pos) return error.IncompleteContetent;
 
     buffer[end_pos] = '\n';
 
-    return buffer;
+    return buffer[0 .. end_pos + 1];
+}
+
+pub fn stream(file: *std.fs.File, buffer: []u8) ![]const u8 {
+    const len = try file.read(buffer);
+
+    return buffer[0..len];
 }
 
 pub fn hash(string: []const u8) u32 {

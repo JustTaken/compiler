@@ -11,9 +11,13 @@ pub fn build(builder: *Builder) void {
         .optimize = optimize,
     });
 
+    main.linkLibC();
     builder.installArtifact(main);
 
     const run_cmd = builder.addRunArtifact(main);
+    if (builder.args) |arg| {
+        run_cmd.addArgs(arg);
+    }
 
     run_cmd.step.dependOn(builder.getInstallStep());
     const run_step = builder.step("run", "Run the app");

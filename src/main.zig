@@ -1,22 +1,31 @@
 const std = @import("std");
-const util =  @import("util.zig");
-const tokenizer = @import("tokenizer.zig");
-const parser = @import("parser.zig");
+const util = @import("util.zig");
+const Arena = @import("collections.zig").Arena;
+const Lexer = @import("lexer.zig").Lexer;
+const Parser = @import("parser.zig").Parser;
 const generator = @import("generator.zig");
 
+const ALLOCATION_LIMIT = 1024 * 16;
+
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}) {};
-    const allocator = gpa.allocator();
+    const buffer: [*]u8 = @ptrCast(std.c.malloc(ALLOCATION_LIMIT) orelse
+        return error.AllocationFail);
+    defer std.c.free(buffer);
 
-    const content = try util.read_file("testing/test.lang", allocator);
-    defer allocator.free(content);
+    var arena = Arena.init(buffer[0..ALLOCATION_LIMIT]);
+    var args = std.process.args();
+    _ = args.next();
 
-    const tokens = try tokenizer.init(content, allocator);
-    defer tokens.deinit();
+    var lexer = Lexer.init(&arena);
+    var parser = Parser.init(&arena);
 
-    const root = try parser.init(tokens, allocator);
-    defer allocator.destroy(root);
-    defer root.deinit();
+    _ = &parser;
 
-    try generator.init(root, allocator);
+    while (args.next()) |arg| {
+        lexer.set_path(arg);
+        lexer.tokenize();
+        parser.parse(&lexer);
+    }
+
+    defer lexer.deinit();
 }

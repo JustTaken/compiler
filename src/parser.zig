@@ -1,737 +1,479 @@
 const std = @import("std");
 const Vec = @import("collections.zig").Vec;
-const FixedVec = @import("collections.zig").FixedVec;
+const Arena = @import("collections.zig").Arena;
+const Lexer = @import("lexer.zig").Lexer;
+const Token = @import("lexer.zig").Token;
+const TokenId = @import("lexer.zig").TokenId;
 const Iter = @import("collections.zig").Iter;
-const Token = @import("tokenizer.zig").Token;
+const Keyword = @import("lexer.zig").Keyword;
 
-const Allocator = std.mem.Allocator;
+const TotalSize = 8192;
+const Count = 8;
+const EachSize = TotalSize / Count;
 
-const Name = struct {
-    parent: *Node,
-    value: []const u8,
+const FunctionSize: u32 = EachSize / @sizeOf(Function);
+const LetSize: u32 = EachSize / @sizeOf(Let);
+const ParameterSize: u32 = EachSize / @sizeOf(Parameter);
+const ExpressionSize: u32 = EachSize / @sizeOf(Expression);
+const BinarySize: u32 = EachSize / @sizeOf(Binary);
+const MatchSize: u32 = EachSize / @sizeOf(Match);
+const MatchBranchSize: u32 = EachSize / @sizeOf(MatchBranch);
 
-    fn init(parent: *Node, value: []const u8) Name {
-        return Name {
-            .parent = parent,
-            .value = value,
+const ExpressionType = enum(u16) {
+    Binary,
+    Literal,
+    Variable,
+    Expression,
+    Call,
+};
+
+const Binary = struct {
+    start: u16,
+    right: u16,
+    left: u16,
+
+    fn collect(
+        first: u16,
+        typ: ExpressionType,
+        parser: *Parser,
+        iter: *Iter(Token),
+    ) Binary {
+        var self: Binary = undefined;
+
+        const left: u16 = @intCast(parser.expression.len);
+        parser.expression.push(Expression.init(
+            first,
+            if (typ == .Literal) .Literal else .Variable,
+        ));
+
+        self.start = iter.next().?.start;
+        iter.consume();
+
+        const token = iter.next().?;
+
+        const right: u16 = @intCast(parser.expression.len);
+        parser.expression.push(Expression.init(
+            token.start,
+            if (token.id == .Literal) .Literal else .Variable,
+        ));
+
+        self.left = left;
+        self.right = right;
+
+        return self;
+    }
+
+    fn extend(s: u16, parser: *Parser, iter: *Iter(Token)) void {
+        var self = parser.binary.get(s);
+
+        const op = iter.next().?.start;
+        iter.consume();
+
+        const token = iter.next().?;
+        iter.consume();
+
+        const other_op = TokenId.operator(parser.content.offset(op));
+        const self_op = TokenId.operator(parser.content.offset(self.start));
+
+        const new: u16 = @intCast(parser.expression.len);
+        parser.expression.push(Expression.init(
+            token.start,
+            if (token.id == .Identifier) .Variable else .Literal,
+        ));
+
+        var binary = Binary{
+            .start = op,
+            .left = self.right,
+            .right = new,
         };
+
+        if (self_op.precedence() > other_op.precedence()) {
+            binary.left = self.left;
+            binary.right = self.right;
+            binary.start = self.start;
+
+            self.right = new;
+            self.left = @intCast(parser.expression.len);
+            self.start = op;
+        } else self.right = @intCast(parser.expression.len);
+
+        parser.expression.push(Expression.init(
+            @intCast(parser.binary.len),
+            .Binary,
+        ));
+
+        parser.binary.push(binary);
     }
 };
 
-const ExpressionLiteral = struct {
-    parent: *Node,
-    name: []const u8,
+const Expression = struct {
+    start: u16,
+    typ: ExpressionType,
 
-    fn init(parent: *Node, name: []const u8) ExpressionLiteral {
-        return ExpressionLiteral {
-            .parent = parent,
-            .name = name,
+    fn init(start: u16, typ: ExpressionType) Expression {
+        return .{
+            .start = start,
+            .typ = typ,
         };
     }
 
-    fn push(self: *Expression, node: *Node) void {
-        _ = self;
-        _ = node;
-    }
+    fn parse(self: *Expression, parser: *Parser, iter: *Iter(Token)) void {
+        while (iter.next()) |token| {
+            switch (token.id) {
+                .Keyword => break,
+                .Symbol => {
+                    const symbol_typ = TokenId.symbol(
+                        parser.content.offset(token.start),
+                    );
 
-    fn push_token(self: *Expression, token: *const Token) void {
-        _ = self;
-        _ = token;
-    }
-};
+                    if (symbol_typ == .ParentesisRight) {
+                        iter.consume();
+                        break;
+                    } else if (symbol_typ != .ParentesisLeft) break;
 
-const ExpressionIdentifier = struct {
-    parent: *Node,
-    name: []const u8,
+                    self.start = @intCast(parser.expression.len);
+                    self.typ = .Expression;
 
-    fn init(parent: *Node, name: []const u8) ExpressionIdentifier {
-        return ExpressionIdentifier {
-            .parent = parent,
-            .name = name,
-        };
-    }
+                    var expression = init(0, .Variable);
+                    expression.parse(parser, iter);
 
-    fn push(self: *Expression, node: *Node) void {
-        _ = self;
-        _ = node;
-    }
+                    parser.expression.push(expression);
+                },
+                .Operator => {
+                    if (self.typ == .Binary) {
+                        Binary.extend(
+                            self.start,
+                            parser,
+                            iter,
+                        );
+                    } else {
+                        const start = self.start;
+                        self.start = @intCast(parser.binary.len);
 
-    fn push_token(self: *Expression, token: *const Token) void {
-        _ = self;
-        _ = token;
-    }
-};
+                        parser.binary.push(Binary.collect(
+                            start,
+                            self.typ,
+                            parser,
+                            iter,
+                        ));
 
-const ExpressionCall = struct {
-    parent: *Node,
-    name: []const u8,
-
-    fn init(parent: *Node, name: []const u8) ExpressionCall {
-        return ExpressionCall {
-            .parent = parent,
-            .name = name,
-        };
-    }
-
-    fn push(self: *Expression, node: *Node) void {
-        _ = self;
-        _ = node;
-    }
-
-    fn push_token(self: *Expression, token: *const Token) void {
-        _ = self;
-        _ = token;
-    }
-};
-
-const BinaryOperation = enum { Sum, Multiplication };
-const ExpressionBinary = struct {
-    parent: *Node,
-    op: BinaryOperation,
-    left: *Expression,
-    right: *Expression,
-
-    fn init(parent: *Node, op: BinaryOperation, left: *Expression, right: *Expression) ExpressionBinary {
-        return ExpressionBinary {
-            .parent = parent,
-            .op = op,
-            .left = left,
-            .right = right,
-        };
-    }
-
-    fn push(self: *Expression, node: *Node) void {
-        _ = self;
-        _ = node;
-    }
-
-    fn push_token(self: *Expression, token: *const Token) void {
-        _ = self;
-        _ = token;
-    }
-};
-
-const ExpressionType = enum { literal, identifier, binary, call };
-const Expression = union(ExpressionType) {
-    literal: ExpressionLiteral,
-    identifier: ExpressionIdentifier,
-    binary: ExpressionBinary,
-    call: ExpressionCall,
-
-    fn init(paren: *Node, token: *const Token) Expression {
-        return switch (token.id) {
-            .Identifier => Expression { .identifier = .{ .parent = paren, .name = token.value.? } },
-            .Number, .String => Expression { .literal = .{ .parent = paren, .name = token.value.? } },
-            else => unreachable,
-        };
-    }
-
-    fn parent(self: *Expression) *Node {
-        return switch (self.*) {
-            .literal => |expression| expression.parent,
-            .identifier => |expression| expression.parent,
-            .binary => |expression| expression.parent,
-            .call => |expression| expression.parent,
-        };
-    }
-
-    fn set_parent(self: *Expression, paren: *Node) void {
-        switch (self.*) {
-            .literal => |*expression| expression.parent = paren,
-            .identifier => |*expression| expression.parent = paren,
-            .binary => |*expression| expression.parent = paren,
-            .call => |*expression| expression.parent = paren,
-        }
-    }
-
-    fn push(self: *Expression, node: *Node) error { InvalidToken }!void {
-        switch (self.*) {
-            .literal => ExpressionLiteral.push(self, node),
-            .identifier => ExpressionIdentifier.push(self, node),
-            .call => ExpressionCall.push(self, node),
-            .binary => ExpressionBinary.push(self, node),
-        }
-    }
-
-    fn push_token(self: *Expression, token: *const Token) void {
-        switch (self.*) {
-            .literal => ExpressionLiteral.push_token(self, token),
-            .identifier => ExpressionIdentifier.push_token(self, token),
-            .call => ExpressionCall.push_token(self, token),
-            .binary => ExpressionBinary.push_token(self, token),
-        }
-    }
-};
-
-const NodeParent = struct {
-    childs: Vec(Node),
-
-    fn init(allocator: Allocator) NodeParent {
-        return NodeParent {
-            .childs = Vec(Node).init(2, allocator) catch @panic("out of memory"),
-        };
-    }
-
-    fn push(self: *NodeParent, parent: *Node, typ: NodeType, token: *const Token) *Node {
-        const node = switch (typ) {
-            .function => Node {.function = .{ .parent = parent, .handle = NodeParent.init(self.childs.allocator) } },
-            .parameter => Node { .parameter = .{ .parent = parent, .handle = NodeParent.init(self.childs.allocator) } },
-            .ret => Node { .ret = .{ .parent = parent, .handle = NodeParent.init(self.childs.allocator), } },
-            .let => Node { .let = .{ .parent = parent, .handle = NodeParent.init(self.childs.allocator), .mutable = false } },
-            .expression => Node { .expression = Expression.init(parent, token) },
-            .name => Node { .name = Name.init(parent, token.value.?) },
-            .typ => Node { .typ = Type.init(parent, token.value.?) },
-            else => unreachable,
-        };
-
-        if (self.childs.flagged_push(node) catch @panic("out of memory")) {
-            for (self.childs.items) |*child| {
-                if (child.childs()) |childs| {
-                    for (childs) |*grand_child| {
-                        grand_child.set_parent(child);
+                        self.typ = .Binary;
                     }
-                }
+                },
+                .Identifier => {
+                    self.typ = .Variable;
+                    self.start = token.start;
+                },
+                .Literal => {
+                    self.typ = .Literal;
+                    self.start = token.start;
+                },
             }
+
+            iter.consume();
         }
-
-        return self.childs.last_mut() catch unreachable;
-    }
-
-    fn deinit(self: *const NodeParent) void {
-        for (self.childs.items) |child| {
-            child.deinit();
-        }
-
-        self.childs.deinit();
     }
 };
 
-const Type = Name;
-const Parameter = struct {
-    parent: *Node,
-    handle: NodeParent,
-
-    fn push(self: *Node, token: *const Token, last: *const Token) error { InvalidToken }!?*Node{
-        const handle= &self.parameter.handle;
-
-        switch (token.id) {
-            .Colon, .ParentesisClose => return null,
-            .DoubleColon => {},
-            .Identifier => {
-                if (last.id == .DoubleColon) _ = handle.push(self, .typ, token)
-                else if (last.id == .ParentesisOpen or last.id == .Colon) _ = handle.push(self, .name, token);
-            },
-            else => {
-                std.debug.print("token: {}\n", .{token});
-                return error.InvalidToken;
-            }
-        }
-
-        return self;
-    }
-};
-
-const Function = struct {
-    parent: *Node,
-    handle: NodeParent,
-
-    fn push(self: *Node, token: *const Token, last: *const Token) error { InvalidToken }!?*Node{
-        const handle = &self.function.handle;
-
-        switch (token.id) {
-            .ParentesisClose, .DoubleColon, .CurlyBracketOpen => {},
-            .CurlyBracketClose => return null,
-            .ParentesisOpen, .Colon => return handle.push(self, .parameter, token),
-            .Let => return handle.push(self, .let, token),
-            .SemiColon => {},
-            .Return => return handle.push(self, .ret, token),
-            .Identifier => {
-                if (last.id == .DoubleColon) _ = handle.push(self, .typ, token)
-                else _ = handle.push(self, .name, token);
-            },
-            else => return error.InvalidToken
-        }
-
-        return self;
-    }
+const LetSignature = packed struct {
+    start: u15,
+    mutable: bool,
 };
 
 const Let = struct {
-    parent: *Node,
-    handle: NodeParent,
-    mutable: bool,
+    signature: LetSignature,
+    expression: u16,
 
-    fn push(self: *Node, token: *const Token, last: *const Token) error { InvalidToken }!?*Node{
-        const handle = &self.let.handle;
+    fn init() Let {
+        return .{
+            .signature = LetSignature{ .start = 0, .mutable = false },
+            .expression = 0,
+        };
+    }
 
-        switch (token.id) {
-            .SemiColon => return null,
-            .Mut => self.let.mutable = true,
-            .Equal => {},
-            .Sum, .Multiplication => {
-                const child = handle.childs.last_mut() catch return error.InvalidToken;
-                if (child.* != .expression) return error.InvalidToken;
-                child.expression.push_token(token);
+    fn parse(self: *Let, parser: *Parser, iter: *Iter(Token)) void {
+        const first = iter.next().?;
+        iter.consume();
+
+        switch (first.id) {
+            .Identifier => self.signature.start = @intCast(first.start),
+            .Keyword => {
+                const keyword = TokenId.keyword(
+                    parser.content.offset(first.start),
+                );
+
+                if (.Mut != keyword) @panic("Should not be here");
+
+                self.signature.mutable = true;
+                const name = iter.next().?;
+
+                self.signature.start = @intCast(name.start);
+                iter.consume();
             },
-            .Identifier, .Number, => {
-                if (last.id == .Mut) _ = handle.push(self, .name, token)
-                else {
-                    const current = handle.childs.last_mut() catch {
-                        _ = handle.push(self, .name, token);
-                        return self;
-                    };
-
-                    const child = handle.push(self, .expression, token);
-                    if (current.* == .expression) try current.expression.push(child);
-                }
-            },
-            else => {
-                std.debug.print("token: {}\n", .{token});
-                return error.InvalidToken;
-            }
+            else => @panic("Should not be here"),
         }
 
-        return self;
+        iter.consume(); // Equal
+
+        var expression = Expression.init(0, .Variable);
+        expression.parse(parser, iter);
+
+        self.expression = @intCast(parser.expression.len);
+        parser.expression.push(expression);
+
+        iter.consume(); // SemiColon
     }
 };
 
-const Return = struct {
-    parent: *Node,
-    handle: NodeParent,
+const Match = struct {
+    branch: u16,
+    count: u16,
 
-    fn push(self: *Node, token: *const Token, _: *const Token) error { InvalidToken }!?*Node{
-        const handle = &self.ret.handle;
-        switch (token.id) {
-            .SemiColon => return null,
-            .Identifier, .Number, => _ = handle.push(self, .expression,token),
-            else => return error.InvalidToken,
+    fn init(parser: *const Parser) Match {
+        return .{
+            .branch = @intCast(parser.match_branch.len),
+            .count = 0,
+        };
+    }
+
+    fn parse(self: *Match, parser: *Parser, iter: *Iter(Token)) void {
+        const first = iter.next().?;
+
+        switch (first.id) {
+            .Identifier => {
+                iter.consume();
+                iter.consume(); // CurlyBracketLeft
+
+                var branch = MatchBranch.init();
+                branch.parse(parser, iter);
+                parser.match_branch.push(branch);
+                self.count += 1;
+            },
+            else => @panic("Should not be here"),
         }
 
-        return self;
+        iter.consume(); // CurlyBracketRight
+    }
+};
+
+const MatchBranch = struct {
+    match: u16,
+    expression: u16,
+
+    fn init() MatchBranch {
+        return .{
+            .match = 0,
+            .expression = 0,
+        };
+    }
+
+    fn parse(self: *MatchBranch, parser: *Parser, iter: *Iter(Token)) void {
+        const name = iter.next().?;
+        if (name.id != .Identifier) @panic("Should not be here");
+        iter.consume();
+
+        self.match = name.start;
+        iter.consume(); // Equal
+        iter.consume(); // Greater
+
+        var expression = Expression.init(0, .Variable);
+        expression.parse(parser, iter);
+
+        self.expression = @intCast(parser.expression.len);
+        parser.expression.push(expression);
+
+        iter.consume(); // Colon
+    }
+};
+
+const Parameter = struct {
+    name: u16,
+    typ: u16,
+
+    fn init() Parameter {
+        return .{
+            .name = 0,
+            .typ = 0,
+        };
+    }
+
+    fn parse(self: *Parameter, parser: *Parser, iter: *Iter(Token)) void {
+        self.name = iter.next().?.start;
+        iter.consume();
+
+        const symbol = iter.next().?;
+        if (.DoubleColon !=
+            TokenId.symbol(parser.content.offset(symbol.start)))
+        {
+            @panic("Should not be here");
+        }
+
+        iter.consume();
+        self.typ = iter.next().?.start;
+        iter.consume();
+    }
+};
+
+const Parameters = packed struct {
+    start: u16,
+    count: u8,
+};
+
+const Lets = packed struct {
+    start: u16,
+    count: u8,
+};
+
+const Matchs = packed struct {
+    start: u16,
+    count: u8,
+};
+
+const Function = struct {
+    name: u16,
+    typ: u16,
+    parameters: Parameters,
+    matchs: Matchs,
+    lets: Lets,
+
+    fn init(parser: *const Parser) Function {
+        return .{
+            .name = 0,
+            .typ = 0,
+            .matchs = Matchs{
+                .start = @intCast(parser.match.len),
+                .count = 0,
+            },
+            .parameters = Parameters{
+                .start = @intCast(parser.function.len),
+                .count = 0,
+            },
+            .lets = Lets{
+                .start = @intCast(parser.let.len),
+                .count = 0,
+            },
+        };
+    }
+
+    fn parse(self: *Function, parser: *Parser, iter: *Iter(Token)) void {
+        self.name = iter.next().?.start;
+        iter.consume();
+        iter.consume(); // Parentesis
+
+        while (iter.next()) |token| {
+            if (.Symbol == token.id) {
+                iter.consume();
+                const symbol = TokenId.symbol(
+                    parser.content.offset(token.start),
+                );
+
+                switch (symbol) {
+                    .ParentesisRight => break,
+                    .Colon => {},
+                    else => {
+                        @panic("Should not be here");
+                    },
+                }
+            }
+
+            var parameter = Parameter.init();
+            parameter.parse(parser, iter);
+            parser.parameter.push(parameter);
+            self.parameters.count += 1;
+        }
+
+        iter.consume(); // DoubleColon
+        self.typ = iter.next().?.start;
+        iter.consume();
+        iter.consume(); // CurlyBracketLeft
+
+        while (iter.next()) |token| {
+            if (token.id != .Keyword) break;
+            iter.consume();
+
+            const keyword = TokenId.keyword(
+                parser.content.offset(token.start),
+            );
+
+            if (.Let == keyword) {
+                var let = Let.init();
+                let.parse(parser, iter);
+                parser.let.push(let);
+                self.lets.count += 1;
+            } else if (.Match == keyword) {
+                var match = Match.init(parser);
+                match.parse(parser, iter);
+                parser.match.push(match);
+                self.matchs.count += 1;
+            } else @panic("Support more keywords");
+        }
+
+        iter.consume(); // CurlyBracketRight
     }
 };
 
 const Root = struct {
-    handle: NodeParent,
+    fn parse(parser: *Parser, iter: *Iter(Token)) void {
+        while (iter.next()) |token| {
+            switch (token.id) {
+                .Keyword => {
+                    if (Keyword.Function !=
+                        TokenId.keyword(parser.content.offset(token.start)))
+                        @panic("Should not be here");
 
-    fn push(self: *Node, token: *const Token, _: *const Token) error { InvalidToken }!?*Node{
-        switch (token.id) {
-            .Function => return self.root.handle.push(self, .function, token),
-            else => return error.InvalidToken,
+                    iter.consume();
+                    var function: Function = Function.init(parser);
+                    function.parse(parser, iter);
+                    parser.function.push(function);
+                },
+                else => @panic("Should not be here"),
+            }
         }
-
-        return self;
     }
 };
 
 const NodeType = enum {
-    root,
-    function,
-    parameter,
-    expression,
-    let,
-    name,
-    typ,
-    ret,
+    Root,
+    Function,
+    Let,
+    Parameter,
+    Expression,
 };
 
-pub const Node = union(NodeType) {
-    root: Root,
-    function: Function,
-    parameter: Parameter,
-    expression: Expression,
-    let: Let,
-    name: Name,
-    typ: Type,
-    ret: Return,
+pub const Parser = struct {
+    arena: Arena,
+    node: NodeType,
+    content: *const Vec(u8),
+    function: Vec(Function),
+    let: Vec(Let),
+    parameter: Vec(Parameter),
+    expression: Vec(Expression),
+    binary: Vec(Binary),
+    match: Vec(Match),
+    match_branch: Vec(MatchBranch),
 
-    fn push(self: *Node, token: *const Token, last: *const Token) error { InvalidToken }!?*Node {
-        return switch (self.*) {
-            .root => try Root.push(self, token, last),
-            .function => try Function.push(self, token, last),
-            .parameter => try Parameter.push(self, token, last),
-            .let => try Let.push(self, token, last),
-            .ret => try Return.push(self, token, last),
-            .expression, .typ, .name => unreachable,
-        };
+    pub fn init(arena: *Arena) Parser {
+        var self: Parser = undefined;
+
+        self.arena = Arena.init(arena.alloc(u8, TotalSize)[0..TotalSize]);
+
+        self.function = Vec(Function).init(FunctionSize, &self.arena);
+        self.let = Vec(Let).init(LetSize, &self.arena);
+        self.parameter = Vec(Parameter).init(ParameterSize, &self.arena);
+        self.expression = Vec(Expression).init(ExpressionSize, &self.arena);
+        self.binary = Vec(Binary).init(BinarySize, &self.arena);
+        self.match = Vec(Match).init(MatchSize, &self.arena);
+        self.match_branch = Vec(MatchBranch).init(MatchBranchSize, &self.arena);
+
+        self.node = NodeType.Root;
+
+        return self;
     }
 
-    pub fn deinit(self: *const Node) void {
-        switch (self.*) {
-            .root => |node| node.handle.deinit(),
-            .function => |node| node.handle.deinit(),
-            .parameter => |node| node.handle.deinit(),
-            .let => |node| node.handle.deinit(),
-            .ret => |node| node.handle.deinit(),
-            .expression, .typ, .name => {},
-        }
-    }
+    pub fn parse(self: *Parser, lexer: *const Lexer) void {
+        self.content = &lexer.content;
+        var iter = Iter(Token).init(&lexer.tokens);
 
-    fn childs(self: *Node) ?[]Node {
-        return switch (self.*) {
-            .root => |node| node.handle.childs.items,
-            .function => |node| node.handle.childs.items,
-            .parameter => |node| node.handle.childs.items,
-            .let => |node| node.handle.childs.items,
-            .ret => |node| node.handle.childs.items,
-            .expression, .typ, .name => null,
-        };
-    }
-
-    fn set_parent(self: *Node, paren: *Node) void {
-        switch (self.*) {
-            .function => |*node| node.parent = paren,
-            .parameter => |*node| node.parent = paren,
-            .let => |*node| node.parent = paren,
-            .ret => |*node| node.parent = paren,
-            .expression => |*node| node.set_parent(paren),
-            .typ => |*node| node.parent = paren,
-            .name => |*node| node.parent = paren,
-            .root => unreachable,
-        }
-    }
-
-    fn parent(self: *Node) ?*Node {
-        return switch (self.*) {
-            .root => null,
-            .function => |node| node.parent,
-            .expression => |*node| node.parent(),
-            .parameter => |node| node.parent,
-            .let => |node| node.parent,
-            .ret => |node| node.parent,
-            .typ => |node| node.parent,
-            .name => |node| node.parent,
-        };
+        Root.parse(self, &iter);
     }
 };
-
-pub fn init(tokens: Vec(Token), allocator: Allocator) !*Node {
-    const root = allocator.create(Node) catch @panic("out of memory");
-    root.* = Node { .root = .{ .handle = NodeParent.init(allocator) } };
-
-    var current_node: ?*Node = root;
-
-    var iter = tokens.iter();
-
-    var last: *const Token = &Token { .id = .Root, .value = null };
-    while (iter.next()) |token| {
-        if (current_node) |node| current_node = try node.push(token, last) orelse node.parent()
-        else break;
-
-        last = token;
-    }
-
-    return root;
-}
-
-// const NodeType = enum {
-//     VariableName,
-//     Type,
-//     Symbol,
-//     Mut,
-//     Literal,
-
-//     Root,
-//     Function,
-//     FunctionName,
-//     FunctionParameters,
-//     FunctionBody,
-//     Parameter,
-//     Let,
-//     Match,
-//     MatchBody,
-//     MatchCase,
-//     Expression,
-//     Return,
-// };
-
-// pub const Node = struct {
-//     childs: Vec(Node),
-//     token: Token,
-//     parent: ?*Node,
-//     typ: NodeType,
-//     next_child: u32,
-
-//     fn init(
-//         typ: NodeType,
-//         token: *const Token,
-//         parent: ?*Node,
-//         len: u32,
-//         allocator: Allocator
-//     ) !Node {
-//          return Node {
-//             .childs = if (len == 0) undefined else try Vec(Node).init(len, allocator),
-//             .token = Token {
-//                 .id = token.id,
-//                 .value = token.value,
-//             },
-//             .parent = parent,
-//              .typ = typ,
-//              .next_child = 0,
-//         };
-//     }
-
-//     fn childless(self: *const Node) bool {
-//         switch (self.typ) {
-//             .VariableName, .FunctionName, .Type, .Symbol, .Mut => return true,
-//             .Expression => return self.token.id == .String,
-//             else => {},
-//         }
-
-//         return false;
-//     }
-
-//     pub fn next_expression(self: *Node) ?*Node {
-//         for (self.childs.items) |*exp| {
-//             if (exp.typ == .Expression) return exp;
-//         }
-
-//         return null;
-//     }
-
-//     pub fn is_literal(self: *Node) bool {
-//         if (self.typ != .Expression) return false;
-//         if (self.childs.len() == 0) return self.token.typ == .Number;
-
-//         for (self.childs.items) |last| {
-//             if (!last.is_literal()) return false;
-//         }
-
-//         return true;
-//     }
-
-//     fn reajust(self: *Node) void {
-//         for (self.childs.items) |*last| {
-//             if (last.childless()) continue;
-
-//             for (last.childs.items) |*grand_child| {
-//                 grand_child.parent = last;
-//             }
-//         }
-//     }
-
-//     fn push_zero(self: *Node, typ: NodeType, token: *const Token) !void {
-//         if (try self.childs.flagged_push(try Node.init(typ, token, self, 0, self.childs.allocator))) self.reajust();
-//     }
-
-//     fn push_child(self: *Node, typ: NodeType, token: *const Token, len: u32) !?*Node {
-//         if (try self.childs.flagged_push(try Node.init(typ, token, self, len, self.childs.allocator))) self.reajust();
-//         return self.childs.last_mut() catch unreachable;
-//     }
-
-//     fn push(self: *Node, token: *const Token) !?*Node {
-//         switch (self.typ) {
-//             .Root => {
-//                 switch (token.id) {
-//                     .Function => return try self.push_child(.Function, token, 4),
-//                     .CurlyBracketClose => return self,
-//                     else => return null,
-//                 }
-//             },
-//             .Function => {
-//                 switch (token.id) {
-//                     .Identifier => {
-//                         if (self.childs.len() == 0) {
-//                             try self.push_zero(.FunctionName, token);
-//                         } else {
-//                             const last = try self.childs.last();
-
-//                             if (last.token.id == .DoubleColon) try self.push_zero(.Type, token)
-//                             else return error.InvalidToken;
-//                         }
-//                     },
-//                     .ParentesisOpen => return try self.push_child(.FunctionParameters, token, 2),
-//                     .ParentesisClose => {},
-//                     .DoubleColon => try self.push_zero(.Symbol, token),
-//                     .CurlyBracketOpen => return try self.push_child(.FunctionBody, token, 3),
-//                     .CurlyBracketClose => return null,
-//                     else => return error.InvalidToken,
-//                 }
-//             },
-//             .FunctionParameters => {
-//                 switch (token.id) {
-//                     .Colon => try self.push_zero(.Symbol, token),
-//                     .Identifier => return try self.push_child(.Parameter, token, 1),
-//                     .ParentesisClose => return null,
-//                     else => return error.InvalidToken,
-//                 }
-//             },
-//             .Parameter => {
-//                 switch (token.id) {
-//                     .DoubleColon => {
-//                         try self.push_zero(.Symbol, token);
-//                     },
-//                     .Identifier => {
-//                         if (self.childs.len() == 0) return error.InvalidToken;
-
-//                         const last = try self.childs.last();
-//                         if (last.token.id != .DoubleColon) return error.InvalidToken;
-//                         try self.push_zero(.Type, token);
-//                     },
-//                     .ParentesisClose, .Colon => return null,
-//                     else => return error.InvalidToken,
-//                 }
-//             },
-//             .FunctionBody => {
-//                 switch (token.id) {
-//                     .Return => return try self.push_child(.Return, token, 2),
-//                     .Let => return try self.push_child(.Let, token, 3),
-//                     .Match => return try self.push_child(.Match, token, 2),
-//                     .SemiColon => {},
-//                     .CurlyBracketClose => return null,
-//                     else => return error.InvalidToken,
-//                 }
-//             },
-//             .Let => {
-//                 switch (token.id) {
-//                     .Mut => try self.push_zero(.Mut, token),
-//                     .Equal => {
-//                         const last = try self.childs.last();
-//                         if (last.token.id == .Identifier) try self.push_zero(.Symbol, token)
-//                         else return error.InvalidToken;
-//                     },
-//                     .Number => {
-//                         const last = try self.childs.last();
-//                         if (last.token.id == .Equal) return try self.push_child(.Expression, token, 2)
-//                         else return error.InvalidToken;
-//                     },
-//                     .String => try self.push_zero(.Expression, token),
-//                     .DoubleColon => try self.push_zero(.Symbol, token),
-//                     .Identifier => {
-//                         if (self.childs.len() > 1) {
-//                             const last = try self.childs.last();
-
-//                             if (last.token.id == .Mut) try self.push_zero(.VariableName, token)
-//                             else if (last.token.id == .DoubleColon) try self.push_zero(.Type, token)
-//                             else if (last.token.id == .Equal) return try self.push_child(.Expression, token, 1)
-//                             else return error.InvalidToken;
-//                         } else {
-//                             try self.push_zero(.VariableName, token);
-//                         }
-//                     },
-//                     .DoubleQuote => {},
-//                     .SemiColon => return null,
-//                     else => return error.InvalidToken,
-//                 }
-//             },
-//             .Return => {
-//                 switch (token.id) {
-//                     .Identifier, .Number => return try self.push_child(.Expression, token, 2),
-//                     .String => try self.push_zero(.Expression, token),
-//                     .DoubleQuote => {},
-//                     .SemiColon => return null,
-//                     else => return error.InvalidToken,
-//                 }
-//             },
-//             .Expression => {
-//                 switch (token.id) {
-//                     .Identifier, .Number => {
-//                         if (self.childs.len() == 0) return error.InvalidToken;
-
-//                         const last = try self.childs.last();
-//                         if (!last.token.id.is_binary_operator()) return error.InvalidToken;
-//                         return try self.push_child(.Expression, token, 1);
-//                     },
-//                     .Sum, .Multiplication => try self.push_zero(.Symbol, token),
-//                     .SemiColon => return null,
-//                     else => return error.InvalidToken,
-//                 }
-//             },
-//             .Match => {
-//                 switch (token.id) {
-//                     .Identifier => try self.push_zero(.VariableName, token),
-//                     .CurlyBracketOpen => return try self.push_child(.MatchBody, token, 3),
-//                     .CurlyBracketClose => return self.parent,
-//                     else => return error.InvalidToken,
-//                 }
-//             },
-//             .MatchBody => {
-//                 switch (token.id) {
-//                     .Number, .Identifier => return try self.push_child(.MatchCase, token, 2),
-//                     .SemiColon => {},
-//                     .CurlyBracketClose => return null,
-//                     else => return error.InvalidToken,
-//                 }
-//             },
-//             .MatchCase => {
-//                 switch (token.id) {
-//                     .Equal => {
-//                         if (self.childs.len() != 0) return error.InvalidToken
-//                         else try self.push_zero(.Symbol, token);
-//                     },
-//                     .Number, .Identifier => return try self.push_child(.Expression, token, 1),
-//                     .SemiColon => return null,
-//                     else => return error.InvalidToken,
-//                 }
-//             },
-
-//             else => unreachable,
-//         }
-
-//         return self;
-//     }
-
-//     pub fn next(self: *Node) ?*Node {
-//         var current_node: ?*Node = self;
-//         if (self.childless()) current_node = self.parent;
-
-//         while (current_node) |node| {
-//             current_node = node.childs.get_mut(node.next_child) catch {
-//                 current_node = node.parent;
-//                 continue;
-//             };
-
-//             node.next_child += 1;
-//             return current_node;
-//         }
-
-//         return null;
-//     }
-
-//     fn iter(self: *const Node, f: fn (*const Node) void ) void {
-//         for (self.childs.items) |last| {
-//             last.iter(f);
-//         }
-
-//         f(self);
-//     }
-
-//     pub fn deinit(self: *const Node) void {
-//         self.iter(free);
-//     }
-// };
-
-// pub fn init(tokens: Vec(Token), allocator: Allocator) !*Node {
-//     var iter = tokens.iter();
-//     const root = try allocator.create(Node);
-
-//     root.* = try Node.init(.Root, &Token { .id = .Root, .value = null }, null, 2, allocator);
-//     var current_node: *Node = root;
-
-//     out: while (iter.next()) |token| {
-//         while (true) {
-//             if (try current_node.push(token)) |node| {
-//                 current_node = node;
-//                 break;
-//             }
-
-//             current_node = current_node.parent orelse break :out;
-//         }
-//     }
-
-//     return root;
-// }
-
-// fn free(node: *const Node) void {
-//     switch (node.typ) {
-//         .VariableName, .FunctionName, .Type, .Symbol, .Mut => return,
-//         .Expression => if (node.token.id == .String) return,
-//         else => {}
-//     }
-
-//     node.childs.deinit();
-// }
-
-// fn print(node: *const Node) void {
-//     std.debug.print("node: {} | {}\n", .{node.typ, node.token.id});
-// }
