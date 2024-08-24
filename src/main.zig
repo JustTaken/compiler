@@ -3,16 +3,12 @@ const util = @import("util.zig");
 const Arena = @import("collections.zig").Arena;
 const Lexer = @import("lexer.zig").Lexer;
 const Parser = @import("parser.zig").Parser;
-const generator = @import("generator.zig");
+const Generator = @import("generator.zig").Generator;
 
-const ALLOCATION_LIMIT = 1024 * 16;
+const ALLOCATION_LIMIT: u32 = 1024 * 24;
 
 pub fn main() !void {
-    const buffer: [*]u8 = @ptrCast(std.c.malloc(ALLOCATION_LIMIT) orelse
-        return error.AllocationFail);
-    defer std.c.free(buffer);
-
-    var arena = Arena.init(buffer[0..ALLOCATION_LIMIT]);
+    var arena = Arena.malloc(ALLOCATION_LIMIT);
     var args = std.process.args();
     _ = args.next();
 
@@ -20,11 +16,17 @@ pub fn main() !void {
     defer lexer.deinit();
 
     var parser = Parser.init(&arena);
-    defer parser.reset();
+    defer parser.deinit();
+
+    var generator = Generator.init(&arena);
+    defer generator.reset();
 
     while (args.next()) |arg| {
         lexer.set_path(arg);
         lexer.tokenize();
         parser.parse(&lexer);
+        generator.parse(&parser, &lexer);
+        parser.reset(&lexer);
     }
+
 }

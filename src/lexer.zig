@@ -6,6 +6,7 @@ const Allocator = std.mem.Allocator;
 const Arena = collections.Arena;
 const Vec = collections.Vec;
 const FixedVec = @import("collections.zig").FixedVec;
+const Parser = @import("parser.zig").Parser;
 
 pub const Keyword = enum(u8) {
     Let,
@@ -13,13 +14,13 @@ pub const Keyword = enum(u8) {
     Mut,
     Return,
     Match,
-    Struct,
+    Type,
 
     fn from_string(string: []const u8) ?Keyword {
         switch (string[0]) {
             'f' => if (util.eql("fn", string)) return Keyword.Function,
             'r' => if (util.eql("return", string)) return Keyword.Return,
-            's' => if (util.eql("struct", string)) return Keyword.Struct,
+            't' => if (util.eql("type", string)) return Keyword.Type,
             'l' => if (util.eql("let", string)) return Keyword.Let,
             'm' => if (util.eql("mut", string))
                 return Keyword.Mut
@@ -34,7 +35,7 @@ pub const Keyword = enum(u8) {
         switch (string[0]) {
             'f' => return Keyword.Function,
             'r' => return Keyword.Return,
-            's' => return Keyword.Struct,
+            't' => return Keyword.Type,
             'l' => return Keyword.Let,
             'm' => {
                 if (string[1] == 'a') return Keyword.Match;
@@ -51,13 +52,13 @@ pub const Operator = enum(u8) {
     Plus,
     Dash,
 
-    pub fn get(string: []const u8) Operator {
+    pub fn get(string: []const u8) ?Operator {
         return switch (string[0]) {
             '*' => .Star,
             '/' => .Bar,
             '+' => .Plus,
             '-' => .Dash,
-            else => @panic("Should not be here"),
+            else => return null,
         };
     }
 
@@ -83,7 +84,7 @@ pub const Symbol = enum(u8) {
     SemiColon,
     Colon,
 
-    fn get(string: []const u8) Symbol {
+    fn get(string: []const u8) ?Symbol {
         return switch (string[0]) {
             '=' => .Equal,
             ':' => .DoubleColon,
@@ -95,20 +96,20 @@ pub const Symbol = enum(u8) {
             ')' => .ParentesisRight,
             ';' => .SemiColon,
             ',' => .Colon,
-            else => @panic("Should not be here"),
+            else => return null,
         };
     }
 };
 
-pub const TokenId = enum(u16) {
-    Keyword,
+pub const TokenId = enum(u8) {
+    Identifier,
     Operator,
     Literal,
+    Keyword,
     Symbol,
-    Identifier,
 
     pub fn symbol(string: []const u8) Symbol {
-        return Symbol.get(string);
+        return Symbol.get(string) orelse @panic("Should not happen");
     }
 
     pub fn keyword(string: []const u8) Keyword {
@@ -116,48 +117,49 @@ pub const TokenId = enum(u16) {
     }
 
     pub fn operator(string: []const u8) Operator {
-        return Operator.get(string);
-    }
-};
-
-pub const Token = struct {
-    id: TokenId,
-    start: u16,
-
-    fn init(id: TokenId, start: usize) Token {
-        return .{
-            .start = @intCast(start),
-            .id = id,
-        };
+        return Operator.get(string) orelse @panic("Should not happen");
     }
 
-    fn from_string(string: [*]const u8, range: *const Range) ?Token {
+    pub fn identifier(string: []const u8) []const u8 {
+        var len: u32 = 0;
+        for (0..string.len) |i| {
+            if (!is_ascci(string[i])) break;
+            len += 1;
+        }
+
+        return string[0..len];
+    }
+
+    fn from_string(string: [*]const u8, range: *const Range) ?TokenId {
         if (range.end == range.start) return null;
-        var id: TokenId = undefined;
+        var self: TokenId = undefined;
 
         switch (string[range.start]) {
             '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' => {
                 if (util.is_number(string[range.start..range.end])) {
-                    id = TokenId.Literal;
+                    self = TokenId.Literal;
                 } else {
                     @panic("Identifier cannot start with a number");
                 }
             },
             else => {
                 if (Keyword.from_string(string[range.start..range.end])) |_| {
-                    id = TokenId.Keyword;
+                    self = TokenId.Keyword;
                 } else {
-                    id = TokenId.Identifier;
+                    self = TokenId.Identifier;
                 }
             },
         }
 
-        return .{
-            .start = @intCast(range.start),
-            .id = id,
-        };
+        return self;
     }
 };
+
+fn is_ascci(char: u8) bool {
+    return (char >= 'A' and char <= 'Z') or
+        (char >= 'a' and char <= 'z') or
+        (char >= '0' and char <= '9');
+}
 
 const Range = struct {
     start: usize,
@@ -203,7 +205,11 @@ const TokenizerState = struct {
 
 pub const Lexer = struct {
     arena: Arena,
-    tokens: Vec(Token),
+
+    token_id: Vec(TokenId),
+    token_start: Vec(u16),
+    token_next: u16,
+
     content: Vec(u8),
 
     state: TokenizerState,
@@ -213,9 +219,13 @@ pub const Lexer = struct {
     pub fn init(arena: *Arena) Lexer {
         var self: Lexer = undefined;
 
-        self.arena = Arena.init(arena.alloc(u8, 1024 * 8)[0 .. 1024 * 8]);
+        self.arena = Arena.init(arena.alloc(u8, 1024 * 7)[0 .. 1024 * 7]);
         self.content = Vec(u8).init(4096, &self.arena);
-        self.tokens = Vec(Token).init(4096 / @sizeOf(Token), &self.arena);
+
+        self.token_id = Vec(TokenId).init(1024, &self.arena);
+        self.token_start = Vec(u16).init(1024, &self.arena);
+        self.token_next = 0;
+
         self.state = TokenizerState.init();
         self.file_open = false;
 
@@ -225,7 +235,8 @@ pub const Lexer = struct {
     pub fn set_path(self: *Lexer, path: []const u8) void {
         if (self.file_open) self.file.close();
 
-        self.tokens.clear();
+        self.token_id.clear();
+        self.token_start.clear();
         self.content.clear();
 
         self.file_open = true;
@@ -233,14 +244,28 @@ pub const Lexer = struct {
             @panic("file does not exist");
     }
 
-    fn push(self: *Lexer, range: *const Range, token: ?Token) void {
-        if (Token.from_string(self.content.items, range)) |t| {
-            self.tokens.push(t);
+    fn push(self: *Lexer) void {
+        if (TokenId.from_string(self.content.items, &self.state.range)) |id| {
+            self.token_id.push(id);
+            self.token_start.push(@intCast(self.state.range.start));
         }
+    }
 
-        if (token) |t| {
-            self.tokens.push(t);
-        }
+    pub fn next_id(self: *const Lexer) TokenId {
+        return self.token_id.items[self.token_next];
+    }
+
+    pub fn next_start(self: *const Lexer) u16 {
+        return self.token_start.items[self.token_next];
+    }
+
+    pub fn consume(self: *Lexer) void {
+        self.token_next += 1;
+    }
+
+    pub fn has_next(self: *Lexer, parser: *Parser) bool {
+        _ = parser;
+        return self.token_next < self.token_id.len;
     }
 
     pub fn tokenize(self: *Lexer) void {
@@ -249,6 +274,7 @@ pub const Lexer = struct {
         {
             const start = self.state.range.start;
             const end = self.state.range.end;
+
             util.copy(
                 u8,
                 self.content.items[start..end],
@@ -259,7 +285,8 @@ pub const Lexer = struct {
             self.state.range.start = 0;
             self.content.len = @intCast(self.state.range.end);
 
-            const buffer = self.content.items[self.content.len..self.content.capacity];
+            const buffer =
+                self.content.items[self.content.len..self.content.capacity];
             self.content.len += @intCast(self.file.read(buffer) catch
                 @panic("could not read from file"));
         }
@@ -268,15 +295,17 @@ pub const Lexer = struct {
             self.state.reset(i);
 
             switch (self.content.items[i]) {
-                ' ', '\n' => self.push(&self.state.range, null),
-                '+', '-', '*', '/' => self.push(
-                    &self.state.range,
-                    Token.init(TokenId.Operator, i),
-                ),
-                ';', '=', ':', ',', '{', '}', '(', ')', '[', ']' => self.push(
-                    &self.state.range,
-                    Token.init(TokenId.Symbol, i),
-                ),
+                ' ', '\n' => self.push(),
+                '+', '-', '*', '/' => {
+                    self.push();
+                    self.token_id.push(TokenId.Operator);
+                    self.token_start.push(@intCast(i));
+                },
+                ';', '=', ':', ',', '{', '}', '(', ')', '[', ']' => {
+                    self.push();
+                    self.token_id.push(TokenId.Symbol);
+                    self.token_start.push(@intCast(i));
+                },
                 else => self.state.concat(i),
             }
         }
