@@ -88,6 +88,12 @@ pub fn parse(i: u32, out: *Vec(u8)) !void {
         out.push(buffer[k - index - 1]);
     }
 }
+pub fn is_ascci(char: u8) bool {
+    return (char >= 'A' and char <= 'Z') or
+        (char >= 'a' and char <= 'z') or
+        (char >= '0' and char <= '9') or
+        (char == '_');
+}
 
 pub fn to_word(u: usize) []const u8 {
     return switch (u) {

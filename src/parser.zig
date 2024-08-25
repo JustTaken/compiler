@@ -55,12 +55,11 @@ const ExpressionType = enum(u8) {
                             self_start.* = @intCast(
                                 parser.type_construct.len,
                             );
-
-                            parser.type_construct.push(TypeConstruct.init(
+                            TypeConstruct.init(
                                 start,
                                 parser,
                                 lexer,
-                            ));
+                            );
 
                             self.* = .TypeConstruct;
                         },
@@ -287,19 +286,19 @@ const FunctionCallArgument = struct {
 const TypeFieldConstruct = struct {
     expression: u8,
 
-    fn init(parser: *Parser, lexer: *Lexer) TypeFieldConstruct {
-        var self: TypeFieldConstruct = undefined;
-
+    fn init(parser: *Parser, lexer: *Lexer) void {
         const start = lexer.next_start();
+
+        parser.type_field_construct.push(undefined);
         parser.type_field_construct_start.push(start);
+
+        const self = parser.type_field_construct.last();
 
         lexer.consume();
         lexer.consume(); // Equal,
 
         self.expression = @intCast(parser.expression.len);
         ExpressionType.init(parser, lexer);
-
-        return self;
     }
 };
 
@@ -307,30 +306,26 @@ const TypeConstruct = struct {
     field: u8,
     count: u8,
 
-    fn init(start: u16, parser: *Parser, lexer: *Lexer) TypeConstruct {
-        var self = TypeConstruct{
-            .field = @intCast(parser.type_field_construct.len),
-            .count = 0,
-        };
-
+    fn init(start: u16, parser: *Parser, lexer: *Lexer) void {
         parser.type_construct_start.push(start);
+        parser.type_construct.push(undefined);
+
+        const self = parser.type_construct.last();
+        self.field = @intCast(parser.type_field_construct.len);
+        self.count = 0;
 
         lexer.consume(); // CurlyBracketLeft
         while (lexer.has_next(parser)) {
             const id = lexer.next_id();
             if (id != .Identifier) break;
 
-            parser.type_field_construct.push(
-                TypeFieldConstruct.init(parser, lexer),
-            );
+            TypeFieldConstruct.init(parser, lexer);
 
             self.count += 1;
             lexer.consume(); // Colon
         }
 
         lexer.consume(); // CurlyBracketRight
-
-        return self;
     }
 };
 
@@ -390,53 +385,17 @@ const Binary = struct {
             else => @panic("Should not happen"),
         }
     }
-
-    fn extend(s: u8, parser: *Parser, lexer: *Lexer) void {
-        var self = parser.binary.get(s);
-        const start = parser.binary_start.get(s);
-
-        const op = lexer.next_start();
-        lexer.consume();
-
-        const other_op = TokenId.operator(lexer.content.offset(op));
-        const self_op = TokenId.operator(lexer.content.offset(start.*));
-
-        const new: u8 = @intCast(parser.expression.len);
-        ExpressionType.init(parser, lexer);
-
-        var new_start = op;
-        var binary = Binary{
-            .left = self.right,
-            .right = new,
-        };
-
-        if (self_op.precedence() > other_op.precedence()) {
-            binary.left = self.left;
-            binary.right = self.right;
-
-            self.right = new;
-            self.left = @intCast(parser.expression.len);
-
-            new_start = start.*;
-            start.* = op;
-        } else self.right = @intCast(parser.expression.len);
-
-        parser.expression_start.push(@intCast(parser.binary.len));
-        parser.expression.push(.Binary);
-        parser.binary_start.push(new_start);
-        parser.binary.push(binary);
-    }
 };
 
 const TypeField = struct {
     typ: u8,
 
-    fn init(parser: *Parser, lexer: *Lexer) TypeField {
-        var self = TypeField{
-            .typ = 0,
-        };
-
+    fn init(parser: *Parser, lexer: *Lexer) void {
         parser.type_field_start.push(lexer.next_start());
+        parser.type_field.push(undefined);
+
+        const self = parser.type_field.last();
+        self.typ = 0;
 
         lexer.consume();
         lexer.consume(); // DoubleColon
@@ -459,8 +418,6 @@ const TypeField = struct {
             parser.type_start.push(inner);
             parser.type_size.push(0);
         }
-
-        return self;
     }
 
     fn persist(parser: *Parser, _: *Lexer) void {
@@ -495,7 +452,7 @@ const Type = struct {
 
             if (token_id != .Identifier) break;
 
-            parser.type_field.push(TypeField.init(parser, lexer));
+            TypeField.init(parser, lexer);
             self.count += 1;
             lexer.consume(); // Colon
         }
@@ -840,7 +797,9 @@ const Scope = struct {
         _ = buffer_offset;
 
         for (0..self.count) |i| {
-            const expression = parser.scope_expression.items[self.expression + i];
+            const expression = parser.scope_expression.items[
+                self.expression + i
+            ];
 
             switch (expression.typ) {
                 .Let => {

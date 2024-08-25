@@ -136,7 +136,7 @@ pub const TokenId = enum(u8) {
     pub fn identifier(string: []const u8) []const u8 {
         var len: u32 = 0;
         for (0..string.len) |i| {
-            if (!is_ascci(string[i])) break;
+            if (!util.is_ascci(string[i])) break;
             len += 1;
         }
 
@@ -167,13 +167,6 @@ pub const TokenId = enum(u8) {
         return self;
     }
 };
-
-fn is_ascci(char: u8) bool {
-    return (char >= 'A' and char <= 'Z') or
-        (char >= 'a' and char <= 'z') or
-        (char >= '0' and char <= '9') or
-        (char == '_');
-}
 
 const Range = struct {
     start: usize,
