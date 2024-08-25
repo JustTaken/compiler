@@ -73,7 +73,7 @@ pub fn parse(i: u32, out: *Vec(u8)) !void {
 
     if (i == 0) {
         buffer[0] = '0';
-        return;
+        k += 1;
     }
 
     while (num > 0) {
@@ -85,6 +85,26 @@ pub fn parse(i: u32, out: *Vec(u8)) !void {
     }
 
     for (0..k) |index| {
-        try out.push(buffer[k - index - 1]);
+        out.push(buffer[k - index - 1]);
     }
+}
+
+pub fn to_word(u: usize) []const u8 {
+    return switch (u) {
+        1 => "byte",
+        2 => "word",
+        4 => "dword",
+        8 => "qword",
+        else => @panic("Should not happen"),
+    };
+}
+
+pub fn register(u: usize) []const u8 {
+    return switch (u) {
+        1 => "al",
+        2 => "ax",
+        4 => "eax",
+        8 => "rax",
+        else => @panic("Should not happen"),
+    };
 }

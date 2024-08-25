@@ -29,26 +29,40 @@ pub const Generator = struct {
     stack: Stack,
     registers: [@typeInfo(RegisterName).Enum.fields.len]Register,
     content: Vec(u8),
+    file: std.fs.File,
 
-    pub fn init(allocator: *Arena) Generator {
+
+    pub fn init(path: []const u8, allocator: *Arena) Generator {
         var arena = Arena.init(allocator.alloc(u8, Size)[0..Size]);
+
         return Generator{
             .content = Vec(u8).init(4096, &arena),
             .arena = arena,
             .stack = Stack{ .pointer = 0 },
             .registers = .{Register{ .value = 0 }} ** 3,
+            .file = std.fs.cwd().createFile(path, .{}) catch unreachable,
         };
     }
 
     pub fn parse(self: *Generator, parser: *Parser, lexer: *Lexer) void {
+        self.content.extend("global _start\n");
+        self.content.extend("section .text\n");
+        self.content.extend("_start:\n");
+        self.content.extend("    call main\n");
+        self.content.extend("    mov rax, 60\n");
+        self.content.extend("    mov rdi, 0\n");
+        self.content.extend("    syscall\n");
+
         for (0..parser.function.offset(0).len) |i| {
             Function.generate(@intCast(i), parser, lexer, &self.content);
         }
     }
 
     pub fn reset(self: *Generator) void {
+        _ = self.file.write(self.content.offset(0)) catch
+            @panic("Could not write to file");
         std.debug.print("{s}\n", .{self.content.offset(0)});
         self.content.clear();
+        self.file.close();
     }
-
 };

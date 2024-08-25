@@ -74,6 +74,7 @@ pub const Operator = enum(u8) {
 
 pub const Symbol = enum(u8) {
     Equal,
+    Dot,
     DoubleColon,
     CurlyBracketLeft,
     CurlyBracketRight,
@@ -96,6 +97,7 @@ pub const Symbol = enum(u8) {
             ')' => .ParentesisRight,
             ';' => .SemiColon,
             ',' => .Colon,
+            '.' => .Dot,
             else => return null,
         };
     }
@@ -118,6 +120,17 @@ pub const TokenId = enum(u8) {
 
     pub fn operator(string: []const u8) Operator {
         return Operator.get(string) orelse @panic("Should not happen");
+    }
+
+    pub fn literal(string: []const u8) []const u8 {
+        var len: u32 = 0;
+        for (0..string.len) |i| {
+            if (string[i] < '0' or string[i] > '9') break;
+
+            len += 1;
+        }
+
+        return string[0..len];
     }
 
     pub fn identifier(string: []const u8) []const u8 {
@@ -158,7 +171,8 @@ pub const TokenId = enum(u8) {
 fn is_ascci(char: u8) bool {
     return (char >= 'A' and char <= 'Z') or
         (char >= 'a' and char <= 'z') or
-        (char >= '0' and char <= '9');
+        (char >= '0' and char <= '9') or
+        (char == '_');
 }
 
 const Range = struct {
@@ -211,9 +225,11 @@ pub const Lexer = struct {
     token_next: u16,
 
     content: Vec(u8),
+    offset: usize,
 
     state: TokenizerState,
     file_open: bool,
+    file_id: u16,
     file: std.fs.File,
 
     pub fn init(arena: *Arena) Lexer {
@@ -221,6 +237,7 @@ pub const Lexer = struct {
 
         self.arena = Arena.init(arena.alloc(u8, 1024 * 7)[0 .. 1024 * 7]);
         self.content = Vec(u8).init(4096, &self.arena);
+        self.offset = 0;
 
         self.token_id = Vec(TokenId).init(1024, &self.arena);
         self.token_start = Vec(u16).init(1024, &self.arena);
@@ -228,6 +245,7 @@ pub const Lexer = struct {
 
         self.state = TokenizerState.init();
         self.file_open = false;
+        self.file_id = 0;
 
         return self;
     }
@@ -235,6 +253,8 @@ pub const Lexer = struct {
     pub fn set_path(self: *Lexer, path: []const u8) void {
         if (self.file_open) self.file.close();
 
+        self.file_id += 1;
+        self.offset += self.content.len;
         self.token_id.clear();
         self.token_start.clear();
         self.content.clear();

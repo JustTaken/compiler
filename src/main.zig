@@ -18,15 +18,14 @@ pub fn main() !void {
     var parser = Parser.init(&arena);
     defer parser.deinit();
 
-    var generator = Generator.init(&arena);
-    defer generator.reset();
+    var generator = Generator.init("zig-out/out.asm", &arena);
 
     while (args.next()) |arg| {
         lexer.set_path(arg);
         lexer.tokenize();
         parser.parse(&lexer);
         generator.parse(&parser, &lexer);
+        generator.reset();
         parser.reset(&lexer);
     }
-
 }

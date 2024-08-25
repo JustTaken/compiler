@@ -97,8 +97,26 @@ pub fn Vec(T: type) type {
             if (self.len + items.len >= self.capacity)
                 @panic("Vec does not have enough size");
 
-            for (items, 0..) |item, i| {
-                self.items[self.len + i] = item;
+            for (0..items.len) |i| {
+                self.items[self.len + i] = items[i];
+            }
+
+            self.len += @intCast(items.len);
+        }
+
+        pub fn extend_insert(self: *Self, index: u32, items: []const u8) void {
+            const diff = self.len - index;
+
+            for (0..diff) |i| {
+                self.items[index + items.len + diff - i - 1] = self.items[
+                    self.len - i - 1
+                ];
+            }
+
+            for (0..items.len) |i| {
+                self.items[index + items.len - i - 1] = items[
+                    items.len - i - 1
+                ];
             }
 
             self.len += @intCast(items.len);
@@ -179,7 +197,7 @@ pub fn HashMap(T: type) type {
                 if (count >= self.capacity) @panic("No more space");
                 if (eql(key, self.key[code])) {
                     flag = true;
-                    if (self.value[self.convert[code]].fields != 0)
+                    if (!self.value[self.convert[code]].is_zero())
                         @panic("Already initialized");
                     break;
                 }
