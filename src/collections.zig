@@ -4,7 +4,7 @@ const copy = util.copy;
 
 pub const Arena = struct {
     ptr: *anyopaque,
-    free: u32,
+    used: u32,
     capacity: u32,
 
     pub fn malloc(size: u32) Arena {
@@ -13,7 +13,7 @@ pub const Arena = struct {
         if (p) |buffer| {
             return Arena{
                 .ptr = buffer,
-                .free = 0,
+                .used = 0,
                 .capacity = size,
             };
         } else {
@@ -25,47 +25,47 @@ pub const Arena = struct {
         return .{
             .ptr = @ptrCast(buffer.ptr),
             .capacity = @intCast(buffer.len),
-            .free = 0,
+            .used = 0,
         };
     }
 
     pub fn alloc(self: *Arena, T: type, size: u32) [*]T {
         const lenght = @sizeOf(T) * size;
 
-        if (lenght + self.free > self.capacity) {
+        // std.debug.print(
+        //     "type: {s}, size: {}, len: {}, used: {} / {}\n",
+        //     .{
+        //         @typeName(T),
+        //         @sizeOf(T),
+        //         size,
+        //         self.used,
+        //         self.capacity,
+        //     },
+        // );
+
+        if (lenght + self.used > self.capacity) {
             @panic("Arena do not have enhough size");
         }
 
-        var ptr: usize = @intFromPtr(self.ptr) + self.free;
-        self.free += lenght;
+        var ptr: usize = @intFromPtr(self.ptr) + self.used;
+        self.used += lenght;
 
         const alig = @alignOf(T);
         const rest = ptr % alig;
 
         if (rest > 0) {
             const offset: u32 = @intCast(alig - rest);
-            self.free += offset;
+            self.used += offset;
             ptr += offset;
         }
-
-        // std.debug.print(
-        //     "type: {s}, size: {}, len: {}, free: {} / {}\n",
-        //     .{
-        //         @typeName(T),
-        //         @sizeOf(T),
-        //         size,
-        //         self.free,
-        //         self.capacity,
-        //     },
-        // );
 
         return @ptrFromInt(ptr);
     }
 
     pub fn free(self: *Arena, T: type, size: u32) void {
         const length = @sizeOf(T) * size;
-        if (length > self.free) @panic("Arena do not have enough size");
-        self.free -= length;
+        if (length > self.used) @panic("Arena do not have enough size");
+        self.used -= length;
     }
 };
 
@@ -191,14 +191,10 @@ pub fn HashMap(T: type) type {
 
             var code = h % self.capacity;
             var count: u32 = 0;
-            var flag = false;
 
             while (self.key[code].len > 0) {
                 if (count >= self.capacity) @panic("No more space");
                 if (eql(key, self.key[code])) {
-                    flag = true;
-                    if (!self.value[self.convert[code]].is_zero())
-                        @panic("Already initialized");
                     break;
                 }
 
@@ -207,12 +203,9 @@ pub fn HashMap(T: type) type {
             }
 
             self.value[self.len] = item;
-
-            if (!flag) {
-                self.convert[code] = @intCast(self.len);
-                self.key[code] = key;
-                self.len += 1;
-            }
+            self.convert[code] = @intCast(self.len);
+            self.key[code] = key;
+            self.len += 1;
         }
 
         pub fn get(self: *const Self, key: []const u8) ?u32 {
@@ -231,6 +224,10 @@ pub fn HashMap(T: type) type {
             }
 
             return null;
+        }
+
+        pub fn last(self: *Self) *T {
+            return &self.value[self.len - 1];
         }
 
         pub fn clear(self: *Self) void {

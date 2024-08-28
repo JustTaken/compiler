@@ -2,11 +2,10 @@ const std = @import("std");
 const util = @import("util.zig");
 const collections = @import("collections.zig");
 
-const Allocator = std.mem.Allocator;
+const Parser = @import("parser.zig").Parser;
+
 const Arena = collections.Arena;
 const Vec = collections.Vec;
-const FixedVec = @import("collections.zig").FixedVec;
-const Parser = @import("parser.zig").Parser;
 
 pub const Keyword = enum(u8) {
     Let,
@@ -124,6 +123,7 @@ pub const TokenId = enum(u8) {
 
     pub fn literal(string: []const u8) []const u8 {
         var len: u32 = 0;
+
         for (0..string.len) |i| {
             if (string[i] < '0' or string[i] > '9') break;
 
@@ -135,6 +135,7 @@ pub const TokenId = enum(u8) {
 
     pub fn identifier(string: []const u8) []const u8 {
         var len: u32 = 0;
+
         for (0..string.len) |i| {
             if (!util.is_ascci(string[i])) break;
             len += 1;
@@ -145,6 +146,7 @@ pub const TokenId = enum(u8) {
 
     fn from_string(string: [*]const u8, range: *const Range) ?TokenId {
         if (range.end == range.start) return null;
+
         var self: TokenId = undefined;
 
         switch (string[range.start]) {
@@ -169,8 +171,8 @@ pub const TokenId = enum(u8) {
 };
 
 const Range = struct {
-    start: usize,
-    end: usize,
+    start: u16,
+    end: u16,
 };
 
 const TokenizerState = struct {
@@ -192,10 +194,10 @@ const TokenizerState = struct {
     fn reset(self: *TokenizerState, i: usize) void {
         if (!self.flag) {
             self.concatenating = false;
-            self.range.start = i;
+            self.range.start = @intCast(i);
         }
 
-        self.range.end = i;
+        self.range.end = @intCast(i);
         self.flag = false;
     }
 
@@ -204,8 +206,8 @@ const TokenizerState = struct {
 
         if (!self.concatenating) {
             self.concatenating = true;
-            self.range.start = i;
-            self.range.end = i;
+            self.range.start = @intCast(i);
+            self.range.end = @intCast(i);
         }
     }
 };
@@ -227,8 +229,9 @@ pub const Lexer = struct {
 
     pub fn init(arena: *Arena) Lexer {
         var self: Lexer = undefined;
+        const size = 1024 * 7;
 
-        self.arena = Arena.init(arena.alloc(u8, 1024 * 7)[0 .. 1024 * 7]);
+        self.arena = Arena.init(arena.alloc(u8, size)[0 .. size]);
         self.content = Vec(u8).init(4096, &self.arena);
         self.offset = 0;
 
@@ -258,9 +261,14 @@ pub const Lexer = struct {
     }
 
     fn push(self: *Lexer) void {
-        if (TokenId.from_string(self.content.items, &self.state.range)) |id| {
+        const token = TokenId.from_string(
+            self.content.items,
+            &self.state.range,
+        );
+
+        if (token) |id| {
             self.token_id.push(id);
-            self.token_start.push(@intCast(self.state.range.start));
+            self.token_start.push(self.state.range.start);
         }
     }
 
@@ -296,7 +304,7 @@ pub const Lexer = struct {
 
             self.state.range.end -= start;
             self.state.range.start = 0;
-            self.content.len = @intCast(self.state.range.end);
+            self.content.len = self.state.range.end;
 
             const buffer =
                 self.content.items[self.content.len..self.content.capacity];

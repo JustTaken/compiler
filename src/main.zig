@@ -15,7 +15,7 @@ pub fn main() !void {
     var lexer = Lexer.init(&arena);
     defer lexer.deinit();
 
-    var parser = Parser.init(&arena);
+    var parser = Parser.init(&arena, &lexer);
     defer parser.deinit();
 
     var generator = Generator.init("zig-out/out.asm", &arena);
@@ -23,9 +23,8 @@ pub fn main() !void {
     while (args.next()) |arg| {
         lexer.set_path(arg);
         lexer.tokenize();
-        parser.parse(&lexer);
+        parser.parse();
         generator.parse(&parser, &lexer);
         generator.reset();
-        parser.reset(&lexer);
     }
 }

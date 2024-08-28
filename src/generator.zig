@@ -5,8 +5,10 @@ const Arena = @import("collections.zig").Arena;
 const Vec = @import("collections.zig").Vec;
 const Node = @import("parser.zig").Root;
 const Parser = @import("parser.zig").Parser;
-const Function = @import("parser.zig").Function;
 const Lexer = @import("lexer.zig").Lexer;
+const TokenId = @import("lexer.zig").TokenId;
+
+const Size: u32 = 1024 * 4;
 
 const RegisterName = enum {
     Rax,
@@ -22,7 +24,26 @@ const Stack = struct {
     pointer: usize,
 };
 
-const Size: u32 = 1024 * 4;
+pub const Variable = struct {
+    typ: u8,
+
+    fn init(
+        start: u16,
+        stack_pointer: u16,
+        typ: u8,
+        parser: *Parser,
+        lexer: *Lexer,
+    ) void {
+        const name = TokenId.identifier(lexer.content.offset(start));
+
+        parser.variable.push(name, .{ .typ = typ });
+        parser.variable_pointer.push(stack_pointer);
+    }
+
+    pub fn is_zero(_: *const Variable) bool {
+        return true;
+    }
+};
 
 pub const Generator = struct {
     arena: Arena,
@@ -30,7 +51,6 @@ pub const Generator = struct {
     registers: [@typeInfo(RegisterName).Enum.fields.len]Register,
     content: Vec(u8),
     file: std.fs.File,
-
 
     pub fn init(path: []const u8, allocator: *Arena) Generator {
         var arena = Arena.init(allocator.alloc(u8, Size)[0..Size]);
@@ -52,10 +72,13 @@ pub const Generator = struct {
         self.content.extend("    mov rax, 60\n");
         self.content.extend("    mov rdi, 0\n");
         self.content.extend("    syscall\n");
+        _ = lexer;
+        _ = parser;
 
-        for (0..parser.function.offset(0).len) |i| {
-            Function.generate(@intCast(i), parser, lexer, &self.content);
-        }
+        // for (0..parser.function.offset(0).len) |i| {
+        // _ = i;
+        // Function.generate(@intCast(i), parser, lexer, &self.content);
+        // }
     }
 
     pub fn reset(self: *Generator) void {
