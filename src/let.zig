@@ -5,6 +5,7 @@ const Expression = @import("expression.zig").Expression;
 const Type = @import("type.zig").Type;
 const Vec = @import("collections.zig").Vec;
 const Arena = @import("collections.zig").Arena;
+const Generator = @import("generator.zig").Generator;
 
 pub const Signature = packed struct {
     start: u15,
@@ -25,6 +26,22 @@ pub const Let = struct {
             .handle = Vec(Handle).init(64, arena),
             .signature = Vec(Signature).init(64, arena),
         };
+    }
+
+    pub fn evaluate(self: *Let, index: u8, generator: *Generator) void {
+        generator.content.extend("let ");
+
+        if (self.signature.items[index].mutable) {
+            generator.content.extend("mutable ");
+        }
+
+        const s = self.signature.items[index].start;
+        const name = TokenId.identifier(
+            generator.parser.lexer.content.offset(s),
+        );
+
+        generator.content.extend(name);
+        generator.content.push('\n');
     }
 
     pub fn parse(self: *Let, parser: *Parser) void {

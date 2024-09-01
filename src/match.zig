@@ -4,13 +4,14 @@ const TokenId = @import("lexer.zig").TokenId;
 const Expression = @import("expression.zig").Expression;
 const Vec = @import("collections.zig").Vec;
 const Arena = @import("collections.zig").Arena;
+const Generator = @import("generator.zig").Generator;
 
 const Branch = struct {
     handle: Vec(u8),
     start: Vec(u16),
 
     fn init(arena: *Arena) Branch {
-        return Branch {
+        return Branch{
             .handle = Vec(u8).init(64, arena),
             .start = Vec(u16).init(64, arena),
         };
@@ -28,7 +29,7 @@ const Branch = struct {
         parser.lexer.consume(); // Equal
         parser.lexer.consume(); // Greater
 
-        handle.*= parser.expression.len(.Expression);
+        handle.* = parser.expression.len(.Expression);
         parser.expression.parse(parser);
 
         parser.lexer.consume(); // Colon
@@ -37,8 +38,8 @@ const Branch = struct {
 
 pub const Match = struct {
     handle: Vec(Handle),
-    start: Vec(u16),
     branch: Branch,
+    start: Vec(u16),
 
     const Handle = struct {
         branch: u8,
@@ -46,20 +47,32 @@ pub const Match = struct {
     };
 
     pub fn init(arena: *Arena) Match {
-        return Match {
+        return Match{
             .handle = Vec(Handle).init(64, arena),
-            .start = Vec(u16).init(64, arena),
             .branch = Branch.init(arena),
+            .start = Vec(u16).init(64, arena),
         };
     }
 
-    pub fn len(self:*const Match) u8 {
+    pub fn evaluate(self: *Match, index: u8, generator: *Generator) void {
+        // const handle = &self.handle.items[index];
+
+        const name = TokenId.identifier(
+            generator.parser.lexer.content.offset(self.start.items[index]),
+        );
+
+        generator.content.extend("match ");
+        generator.content.extend(name);
+        generator.content.push('\n');
+    }
+
+    pub fn len(self: *const Match) u8 {
         return @intCast(self.handle.len);
     }
 
     pub fn parse(self: *Match, parser: *Parser) void {
         self.start.push(parser.lexer.next_start());
-        self.handle.push(Handle {
+        self.handle.push(Handle{
             .branch = @intCast(self.branch.handle.len),
             .count = 0,
         });
@@ -91,4 +104,3 @@ pub const Match = struct {
         parser.lexer.consume(); // CurlyBracketRight
     }
 };
-

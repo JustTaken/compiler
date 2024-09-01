@@ -6,6 +6,7 @@ const Expression = @import("expression.zig").Expression;
 const Vec = @import("collections.zig").Vec;
 const HashMap = @import("collections.zig").HashMap;
 const Arena = @import("collections.zig").Arena;
+const Generator = @import("generator.zig").Generator;
 
 const FieldConstruct = struct {
     handle: Vec(u8),
@@ -274,6 +275,14 @@ pub const Type = struct {
             .field_construct = FieldConstruct.init(arena),
             .property = Property.init(arena),
         };
+    }
+
+    pub fn evaluate(self: *Type, kind: Kind, index: u8, generator: *Generator,) void {
+        _ = self;
+        _ = index;
+        _ = kind;
+
+        generator.content.extend("don't know wich type it is\n");
     }
 
     pub fn parse(self: *Type, arg: u16, kind: Kind, parser: *Parser) void {

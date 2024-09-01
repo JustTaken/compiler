@@ -6,6 +6,7 @@ const Scope = @import("scope.zig").Scope;
 const Let = @import("let.zig").Let;
 const Type = @import("type.zig").Type;
 const Vec = @import("collections.zig").Vec;
+const Generator = @import("generator.zig").Generator;
 
 const Call = struct {
     handle: Vec(Handle),
@@ -21,6 +22,13 @@ const Call = struct {
             .handle = Vec(Handle).init(64, arena),
             .start = Vec(u16).init(64, arena),
         };
+    }
+
+    inline fn evaluate(function: *Function, index: u8, generator: *Generator) void {
+        _ = function;
+        _ = index;
+
+        generator.content.extend("function call\n");
     }
 
     inline fn parse(function: *Function, arg: u16, parser: *Parser) void {
@@ -71,6 +79,12 @@ const CallArgument = struct {
         };
     }
 
+    inline fn evaluate(function: *Function, index: u8, generator: *Generator) void {
+        _ = index;
+        _ = function;
+        generator.content.extend("function call argument\n");
+    }
+
     inline fn parse(function: *Function, parser: *Parser) void {
         const self = &function.call_argument;
 
@@ -97,9 +111,24 @@ const Inner = struct {
         };
     }
 
+    pub fn evaluate(function: *Function, index: u8, generator: *Generator) void {
+        const self = &function.inner;
+
+        const name = TokenId.identifier(
+            generator.parser.lexer.content.offset(self.start.items[index]),
+        );
+
+        generator.content.extend("function: ");
+        generator.content.extend(name);
+        generator.content.push('\n');
+
+        generator.parser.scope.evaluate(@intCast(index), generator);
+    }
+
     inline fn parse(function: *Function, parser: *Parser) void {
         const self = &function.inner;
         self.start.push(parser.lexer.next_start());
+
         self.handle.push(Handle{
             .typ = 0,
             .scope = parser.scope.len(),
@@ -118,6 +147,7 @@ const Inner = struct {
 
             if (.Symbol == token_id) {
                 parser.lexer.consume();
+
                 const symbol = TokenId.symbol(
                     parser.lexer.content.offset(token_start),
                 );
@@ -144,6 +174,40 @@ const Inner = struct {
         parser.scope.parse(parser);
 
         parser.lexer.consume(); // CurlyBracketRight
+    }
+
+};
+
+const Parameter = struct {
+    handle: Vec(u8),
+    start: Vec(u16),
+
+    fn init(arena: *Arena) Parameter {
+        return Parameter{
+            .handle = Vec(u8).init(64, arena),
+            .start = Vec(u16).init(64, arena),
+        };
+    }
+
+    inline fn evaluate(function: *Function, index: u8, generator: *Generator,) void {
+        _ =index;
+        _ = function;
+
+        generator.content.extend("function parameter\n");
+    }
+
+    fn parse(function: *Function, parser: *Parser) void {
+        const self = &function.parameter;
+
+        self.start.push(parser.lexer.next_start());
+        self.handle.push(0);
+
+        const handle = self.handle.last();
+
+        parser.lexer.consume();
+        parser.lexer.consume(); // DoubleColon
+
+        handle.* = parser.typ.register(parser);
     }
 };
 
@@ -177,6 +241,24 @@ pub const Function = struct {
         }
     }
 
+    pub fn evaluate(
+        self: *Function,
+        kind: Kind,
+        index: u8,
+        generator: *Generator,
+    ) void {
+        switch (kind) {
+            .Function => Inner.evaluate(self, index, generator),
+            .FunctionCall => Call.evaluate(self, index, generator),
+            .Parameter => Parameter.evaluate(self, index, generator),
+            .FunctionCallArgument => CallArgument.evaluate(
+                self,
+                index,
+                generator,
+            ),
+        }
+    }
+
     pub fn len(self: *const Function, kind: Kind) u8 {
         const l = switch (kind) {
             .Function => self.inner.handle.len,
@@ -189,28 +271,3 @@ pub const Function = struct {
     }
 };
 
-const Parameter = struct {
-    handle: Vec(u8),
-    start: Vec(u16),
-
-    fn init(arena: *Arena) Parameter {
-        return Parameter{
-            .handle = Vec(u8).init(64, arena),
-            .start = Vec(u16).init(64, arena),
-        };
-    }
-
-    fn parse(function: *Function, parser: *Parser) void {
-        const self = &function.parameter;
-        self.start.push(parser.lexer.next_start());
-        self.handle.push(0);
-
-        const handle = self.handle.last();
-
-        parser.lexer.consume();
-        parser.lexer.consume(); // DoubleColon
-
-        handle.* = parser.typ.register(parser);
-
-    }
-};

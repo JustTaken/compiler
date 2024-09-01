@@ -14,6 +14,7 @@ const Expression = @import("expression.zig").Expression;
 const Let = @import("let.zig").Let;
 const Scope = @import("scope.zig").Scope;
 const Variable = @import("generator.zig").Variable;
+const Generator = @import("generator.zig").Generator;
 
 const TotalSize = 1024 * 8;
 
@@ -83,6 +84,13 @@ pub const Parser = struct {
         self.variable_pointer = Vec(u16).init(64, &self.arena);
 
         return self;
+    }
+
+    pub fn evaluate(self: *Parser, generator: *Generator) void {
+
+        for (0..self.function.inner.handle.len) |i| {
+            self.function.evaluate(.Function, @intCast(i), generator);
+        }
     }
 
     pub fn parse(self: *Parser) void {

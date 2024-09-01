@@ -49,10 +49,11 @@ pub const Generator = struct {
     arena: Arena,
     stack: Stack,
     registers: [@typeInfo(RegisterName).Enum.fields.len]Register,
+    parser: *Parser,
     content: Vec(u8),
     file: std.fs.File,
 
-    pub fn init(path: []const u8, allocator: *Arena) Generator {
+    pub fn init(path: []const u8, parser: *Parser, allocator: *Arena) Generator {
         var arena = Arena.init(allocator.alloc(u8, Size)[0..Size]);
 
         return Generator{
@@ -61,24 +62,20 @@ pub const Generator = struct {
             .stack = Stack{ .pointer = 0 },
             .registers = .{Register{ .value = 0 }} ** 3,
             .file = std.fs.cwd().createFile(path, .{}) catch unreachable,
+            .parser = parser,
         };
     }
 
-    pub fn parse(self: *Generator, parser: *Parser, lexer: *Lexer) void {
-        self.content.extend("global _start\n");
-        self.content.extend("section .text\n");
-        self.content.extend("_start:\n");
-        self.content.extend("    call main\n");
-        self.content.extend("    mov rax, 60\n");
-        self.content.extend("    mov rdi, 0\n");
-        self.content.extend("    syscall\n");
-        _ = lexer;
-        _ = parser;
+    pub fn generate(self: *Generator) void {
+        // self.content.extend("global _start\n");
+        // self.content.extend("section .text\n");
+        // self.content.extend("_start:\n");
+        // self.content.extend("    call main\n");
+        // self.content.extend("    mov rax, 60\n");
+        // self.content.extend("    mov rdi, 0\n");
+        // self.content.extend("    syscall\n");
 
-        // for (0..parser.function.offset(0).len) |i| {
-        // _ = i;
-        // Function.generate(@intCast(i), parser, lexer, &self.content);
-        // }
+        self.parser.evaluate(self);
     }
 
     pub fn reset(self: *Generator) void {

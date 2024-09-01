@@ -6,6 +6,7 @@ const Let = @import("let.zig").Let;
 const Match = @import("match.zig").Match;
 const Vec = @import("collections.zig").Vec;
 const Arena = @import("collections.zig").Arena;
+const Generator = @import("generator.zig").Generator;
 
 pub const Kind = enum(u8) {
     Let,
@@ -17,14 +18,39 @@ const Inner = struct {
     kind: Vec(Kind),
     start: Vec(u8),
 
-    pub fn init(arena: *Arena) Inner {
-        return Inner {
+    fn init(arena: *Arena) Inner {
+        return Inner{
             .kind = Vec(Kind).init(64, arena),
             .start = Vec(u8).init(64, arena),
         };
     }
 
-    fn keyword(scope:*Scope, parser: *Parser) void {
+    fn evaluate(scope: *Scope, index: u8, generator: *Generator) void {
+        const start = scope.start.items[index];
+        const self = &scope.inner;
+
+        for (0..scope.count.items[index]) |i| {
+            const kind = self.kind.items[i + start];
+            const s = self.start.items[i + start];
+
+            switch (kind) {
+                .Let => generator.parser.let.evaluate(
+                    s,
+                    generator,
+                ),
+                .Expression => generator.parser.expression.evaluate(
+                    s,
+                    generator,
+                ),
+                .Match => generator.parser.match.evaluate(
+                    s,
+                    generator,
+                ),
+            }
+        }
+    }
+
+    fn keyword(scope: *Scope, parser: *Parser) void {
         const self = &scope.inner;
 
         const token_start = parser.lexer.next_start();
@@ -81,7 +107,7 @@ pub const Scope = struct {
     count: Vec(u8),
 
     pub fn init(arena: *Arena) Scope {
-        return Scope {
+        return Scope{
             .inner = Inner.init(arena),
             .start = Vec(u8).init(32, arena),
             .count = Vec(u8).init(32, arena),
@@ -90,6 +116,10 @@ pub const Scope = struct {
 
     pub fn len(self: *const Scope) u8 {
         return @intCast(self.start.len);
+    }
+
+    pub fn evaluate(self: *Scope, index: u8, generator: *Generator) void {
+        Inner.evaluate(self, index, generator);
     }
 
     pub fn parse(self: *Scope, parser: *Parser) void {

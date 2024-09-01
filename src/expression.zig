@@ -4,8 +4,9 @@ const TokenId = @import("lexer.zig").TokenId;
 const Function = @import("function.zig").Function;
 const Vec = @import("collections.zig").Vec;
 const Arena = @import("collections.zig").Arena;
+const Generator = @import("generator.zig").Generator;
 
-const Kind = struct {
+const Inner = struct {
     handle: Vec(Handle),
     start: Vec(u16),
 
@@ -17,13 +18,62 @@ const Kind = struct {
         Expression,
         TypeConstruct,
         Property,
+
+        fn to_string(self: *Handle) []const u8 {
+            return switch (self.*) {
+                .Call => "Call",
+                .Binary => "Binary",
+                .Literal => "Literal",
+                .Variable => "Variable",
+                .Expression => "Expression",
+                .TypeConstruct => "TypeConstruct",
+                .Property => "Property",
+            };
+        }
     };
 
-    fn init(arena: *Arena) Kind {
-        return Kind{
+    fn init(arena: *Arena) Inner {
+        return Inner{
             .handle = Vec(Handle).init(64, arena),
             .start = Vec(u16).init(64, arena),
         };
+    }
+
+    fn evaluate(
+        expression: *Expression,
+        index: u8,
+        generator: *Generator,
+    ) void {
+        const handle = &expression.inner.handle.items[index];
+        const start = expression.inner.start.items[index];
+
+        generator.content.extend("expression ");
+
+        switch (handle.*) {
+            .Call => generator.parser.function.evaluate(
+                .FunctionCall,
+                @intCast(start),
+                generator,
+            ),
+            .Literal => generator.content.extend(
+                TokenId.literal(generator.parser.lexer.content.offset(start)),
+            ),
+            .Binary => Binary.evaluate(expression, @intCast(start), generator),
+            .Variable => generator.content.extend(
+                TokenId.identifier(
+                    generator.parser.lexer.content.offset(start),
+                ),
+            ),
+            .Expression => evaluate(expression, @intCast(start), generator),
+            .TypeConstruct => generator.parser.typ.evaluate(
+                .TypeConstruct,
+                @intCast(start),
+                generator,
+            ),
+            .Property => @panic("Not implemented yet"),
+        }
+
+        generator.content.push('\n');
     }
 
     fn parse(expression: *Expression, parser: *Parser) void {
@@ -136,10 +186,22 @@ const Binary = struct {
         };
     }
 
+    fn evaluate(
+        expression: *Expression,
+        index: u8,
+        generator: *Generator,
+    ) void {
+        const start = expression.binary.start.items[index];
+
+        generator.content.push(
+            generator.parser.lexer.content.items[start],
+        );
+    }
+
     fn parse(
         expression: *Expression,
         first: u16,
-        typ: Kind.Handle,
+        typ: Inner.Handle,
         parser: *Parser,
     ) void {
         const self = &expression.binary;
@@ -157,7 +219,7 @@ const Binary = struct {
         expression.inner.handle.push(typ);
 
         handle.right = expression.len(.Expression);
-        Kind.parse(expression, parser);
+        Inner.parse(expression, parser);
 
         switch (expression.inner.handle.items[handle.right]) {
             .Binary => {
@@ -199,21 +261,25 @@ pub const ExpressionKind = enum {
 };
 
 pub const Expression = struct {
-    inner: Kind,
+    inner: Inner,
     binary: Binary,
 
     pub fn init(arena: *Arena) Expression {
         return Expression{
-            .inner = Kind.init(arena),
+            .inner = Inner.init(arena),
             .binary = Binary.init(arena),
         };
+    }
+
+    pub fn evaluate(self: *Expression, index: u8, generator: *Generator) void {
+        Inner.evaluate(self, index, generator);
     }
 
     pub fn parse(
         self: *Expression,
         parser: *Parser,
     ) void {
-        Kind.parse(self, parser);
+        Inner.parse(self, parser);
     }
 
     pub fn len(self: *const Expression, kind: ExpressionKind) u8 {
