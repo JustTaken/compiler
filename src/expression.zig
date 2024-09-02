@@ -47,8 +47,6 @@ const Inner = struct {
         const handle = &expression.inner.handle.items[index];
         const start = expression.inner.start.items[index];
 
-        generator.content.extend("expression ");
-
         switch (handle.*) {
             .Call => generator.parser.function.evaluate(
                 .FunctionCall,
@@ -283,11 +281,11 @@ pub const Expression = struct {
     }
 
     pub fn len(self: *const Expression, kind: ExpressionKind) u8 {
-        const l = switch (kind) {
+        const length = switch (kind) {
             .Binary => self.binary.handle.len,
             .Expression => self.inner.handle.len,
         };
 
-        return @intCast(l);
+        return @intCast(length);
     }
 };

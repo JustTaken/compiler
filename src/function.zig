@@ -24,11 +24,26 @@ const Call = struct {
         };
     }
 
-    inline fn evaluate(function: *Function, index: u8, generator: *Generator) void {
-        _ = function;
-        _ = index;
+    inline fn evaluate(
+        function: *Function,
+        index: u8,
+        generator: *Generator,
+    ) void {
+        const self = &function.call;
 
-        generator.content.extend("function call\n");
+        generator.content.extend("calling fuction with name {");
+        const name = TokenId.identifier(
+            generator.parser.lexer.content.offset(self.start.items[index]),
+        );
+
+        generator.content.extend(name);
+        generator.content.extend("} and arguments: \n");
+
+        const handle = &self.handle.items[index];
+
+        for (0..handle.count) |i| {
+            CallArgument.evaluate(function, @intCast(i), generator);
+        }
     }
 
     inline fn parse(function: *Function, arg: u16, parser: *Parser) void {
@@ -39,8 +54,6 @@ const Call = struct {
             .arg = function.len(.FunctionCallArgument),
             .count = 0,
         });
-
-        parser.lexer.consume();
 
         const handle = self.handle.last();
 
@@ -79,10 +92,14 @@ const CallArgument = struct {
         };
     }
 
-    inline fn evaluate(function: *Function, index: u8, generator: *Generator) void {
-        _ = index;
-        _ = function;
-        generator.content.extend("function call argument\n");
+    inline fn evaluate(
+        function: *Function,
+        index: u8,
+        generator: *Generator,
+    ) void {
+        const self = &function.call_argument;
+        generator.content.extend("argument expression ");
+        generator.parser.expression.evaluate(self.handle.items[index], generator,);
     }
 
     inline fn parse(function: *Function, parser: *Parser) void {
@@ -111,16 +128,32 @@ const Inner = struct {
         };
     }
 
-    pub fn evaluate(function: *Function, index: u8, generator: *Generator) void {
+    pub fn evaluate(
+        function: *Function,
+        index: u8,
+        generator: *Generator,
+    ) void {
         const self = &function.inner;
+        const handle = self.handle.items[index];
 
         const name = TokenId.identifier(
             generator.parser.lexer.content.offset(self.start.items[index]),
         );
 
-        generator.content.extend("function: ");
+        generator.content.extend("Function with name {");
         generator.content.extend(name);
-        generator.content.push('\n');
+        generator.content.extend("} and return type {");
+
+        const return_type_name = TokenId.identifier(
+            generator.parser.lexer.content.offset(generator.parser.typ.inner.start.items[handle.typ]),
+        );
+
+        generator.content.extend(return_type_name);
+        generator.content.extend("} \n");
+
+        for (0..handle.parameter_count) |i| {
+            Parameter.evaluate(function, @intCast(i), generator);
+        }
 
         generator.parser.scope.evaluate(@intCast(index), generator);
     }
@@ -175,7 +208,6 @@ const Inner = struct {
 
         parser.lexer.consume(); // CurlyBracketRight
     }
-
 };
 
 const Parameter = struct {
@@ -189,11 +221,23 @@ const Parameter = struct {
         };
     }
 
-    inline fn evaluate(function: *Function, index: u8, generator: *Generator,) void {
-        _ =index;
-        _ = function;
+    inline fn evaluate(
+        function: *Function,
+        index: u8,
+        generator: *Generator,
+    ) void {
+        const self = &function.parameter;
 
-        generator.content.extend("function parameter\n");
+        generator.content.extend("Function parameter of type {");
+        const type_name = TokenId.identifier(
+            generator.parser.lexer.content.offset(generator.parser.typ.inner.start.items[self.handle.items[index]]),
+        );
+
+        generator.content.extend(type_name);
+        generator.content.extend("} and variable name: {");
+        const name = TokenId.identifier(generator.parser.lexer.content.offset(self.start.items[index]));
+        generator.content.extend(name);
+        generator.content.extend("}\n");
     }
 
     fn parse(function: *Function, parser: *Parser) void {
@@ -233,14 +277,6 @@ pub const Function = struct {
         };
     }
 
-    pub fn parse(self: *Function, arg: u16, kind: Kind, parser: *Parser) void {
-        switch (kind) {
-            .Function => Inner.parse(self, parser),
-            .FunctionCall => Call.parse(self, arg, parser),
-            else => @panic("Should not happen"),
-        }
-    }
-
     pub fn evaluate(
         self: *Function,
         kind: Kind,
@@ -259,6 +295,14 @@ pub const Function = struct {
         }
     }
 
+    pub fn parse(self: *Function, arg: u16, kind: Kind, parser: *Parser) void {
+        switch (kind) {
+            .Function => Inner.parse(self, parser),
+            .FunctionCall => Call.parse(self, arg, parser),
+            else => @panic("Should not happen"),
+        }
+    }
+
     pub fn len(self: *const Function, kind: Kind) u8 {
         const l = switch (kind) {
             .Function => self.inner.handle.len,
@@ -270,4 +314,3 @@ pub const Function = struct {
         return @intCast(l);
     }
 };
-

@@ -81,7 +81,9 @@ pub const Generator = struct {
     pub fn reset(self: *Generator) void {
         _ = self.file.write(self.content.offset(0)) catch
             @panic("Could not write to file");
+
         std.debug.print("{s}\n", .{self.content.offset(0)});
+
         self.content.clear();
         self.file.close();
     }
