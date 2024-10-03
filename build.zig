@@ -11,7 +11,6 @@ pub fn build(builder: *Builder) void {
         .optimize = optimize,
     });
 
-    main.linkLibC();
     builder.installArtifact(main);
 
     const run_cmd = builder.addRunArtifact(main);
@@ -20,6 +19,7 @@ pub fn build(builder: *Builder) void {
     }
 
     run_cmd.step.dependOn(builder.getInstallStep());
+
     const run_step = builder.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 }

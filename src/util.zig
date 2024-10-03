@@ -1,6 +1,29 @@
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 const Vec = @import("collections.zig").Vec;
+
+pub const Index = u16;
+pub const Range = struct {
+    start: u16,
+    end: u16,
+
+    pub fn new(start: u32, end: u32) Range {
+        return Range {
+            .start = @intCast(start),
+            .end = @intCast(end),
+        };
+    }
+
+    pub fn eql(self: *const Range, other: Range, string: Vec(u8)) bool {
+        const first = string.range(self.*);
+        const second = string.range(other);
+
+        return equal(u8, first, second);
+    }
+};
+
+pub fn print(comptime fmt: []const u8, args: anytype) void {
+    std.debug.print(fmt, args);
+}
 
 pub fn copy(T: type, src: []const T, dst: []T) void {
     @setRuntimeSafety(false);
@@ -12,7 +35,7 @@ pub fn copy(T: type, src: []const T, dst: []T) void {
     }
 }
 
-pub fn eql(one: []const u8, two: []const u8) bool {
+pub fn equal(T: type, one: []const T, two: []const T) bool {
     if (one.len != two.len) return false;
     const len = min(one.len, two.len);
 
@@ -25,7 +48,7 @@ pub fn eql(one: []const u8, two: []const u8) bool {
 
 pub fn is_number(string: []const u8) bool {
     for (string) |c| {
-        if (c < '0' or c > '9') return false;
+        if (!is_digit(c)) return false;
     }
 
     return true;
@@ -34,26 +57,6 @@ pub fn is_number(string: []const u8) bool {
 pub fn min(one: usize, two: usize) u32 {
     if (one < two) return @intCast(one);
     return @intCast(two);
-}
-
-pub fn read_file(path: []const u8, buffer: []u8) ![]const u8 {
-    const file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
-
-    const end_pos = try file.getEndPos();
-
-    if (buffer.len < end_pos) return error.BufferDoNotHaveEnougthSize;
-    if (try file.read(buffer) != end_pos) return error.IncompleteContetent;
-
-    buffer[end_pos] = '\n';
-
-    return buffer[0 .. end_pos + 1];
-}
-
-pub fn stream(file: *std.fs.File, buffer: []u8) ![]const u8 {
-    const len = try file.read(buffer);
-
-    return buffer[0..len];
 }
 
 pub fn hash(string: []const u8) u32 {
@@ -65,16 +68,18 @@ pub fn hash(string: []const u8) u32 {
     return @intCast(h);
 }
 
-pub fn parse(i: u32, out: *Vec(u8)) !void {
+pub fn parse(i: isize, out: *Vec(u8)) void {
     var buffer: [20]u8 = undefined;
 
-    var k: u32 = 0;
-    var num = i;
+    var k: usize = 0;
+    const neg = i < 0;
 
     if (i == 0) {
         buffer[0] = '0';
         k += 1;
     }
+
+    var num: u32 = if (neg) @intCast(-i) else @intCast(i);
 
     while (num > 0) {
         const rem: u8 = @intCast(num % 10);
@@ -84,33 +89,42 @@ pub fn parse(i: u32, out: *Vec(u8)) !void {
         num /= 10;
     }
 
+    if (neg) {
+        buffer[k] = '-';
+        k += 1;
+    }
+
     for (0..k) |index| {
         out.push(buffer[k - index - 1]);
     }
 }
+
+pub fn to_int(string: []const u8) u32 {
+    var number: u32 = 0;
+    var multiply: u32 = 1;
+
+    for (0..string.len) |i| {
+        number += multiply * (string[string.len - i - 1] - '0');
+        multiply *= 10;
+    }
+
+    return number;
+}
+
+pub fn is_digit(char: u8) bool {
+    return char >= '0' and char <= '9';
+}
+
+pub fn is_alpha(char: u8) bool {
+    return (char >= 'A' and char <= 'Z') or (char >= 'a' and char <= 'z') or char == '_';
+}
+
 pub fn is_ascci(char: u8) bool {
-    return (char >= 'A' and char <= 'Z') or
-        (char >= 'a' and char <= 'z') or
-        (char >= '0' and char <= '9') or
-        (char == '_');
+    return is_alpha(char) or is_digit(char);
 }
 
-pub fn to_word(u: usize) []const u8 {
-    return switch (u) {
-        1 => "byte",
-        2 => "word",
-        4 => "dword",
-        8 => "qword",
-        else => @panic("Should not happen"),
-    };
-}
-
-pub fn register(u: usize) []const u8 {
-    return switch (u) {
-        1 => "al",
-        2 => "ax",
-        4 => "eax",
-        8 => "rax",
-        else => @panic("Should not happen"),
-    };
+pub fn assert(flag: bool) !void {
+    if (!flag) {
+        return error.AssertionFailed;
+    }
 }

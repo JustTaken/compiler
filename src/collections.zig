@@ -1,73 +1,7 @@
-const std = @import("std");
 const util = @import("util.zig");
-const copy = util.copy;
 
-pub const Arena = struct {
-    ptr: *anyopaque,
-    used: u32,
-    capacity: u32,
-
-    pub fn malloc(size: u32) Arena {
-        const p = std.c.malloc(size);
-
-        if (p) |buffer| {
-            return Arena{
-                .ptr = buffer,
-                .used = 0,
-                .capacity = size,
-            };
-        } else {
-            @panic("Could not allocate");
-        }
-    }
-
-    pub fn init(buffer: []u8) Arena {
-        return .{
-            .ptr = @ptrCast(buffer.ptr),
-            .capacity = @intCast(buffer.len),
-            .used = 0,
-        };
-    }
-
-    pub fn alloc(self: *Arena, T: type, size: u32) [*]T {
-        const lenght = @sizeOf(T) * size;
-
-        // std.debug.print(
-        //     "type: {s}, size: {}, len: {}, used: {} / {}\n",
-        //     .{
-        //         @typeName(T),
-        //         @sizeOf(T),
-        //         size,
-        //         self.used,
-        //         self.capacity,
-        //     },
-        // );
-
-        if (lenght + self.used > self.capacity) {
-            @panic("Arena do not have enhough size");
-        }
-
-        var ptr: usize = @intFromPtr(self.ptr) + self.used;
-        self.used += lenght;
-
-        const alig = @alignOf(T);
-        const rest = ptr % alig;
-
-        if (rest > 0) {
-            const offset: u32 = @intCast(alig - rest);
-            self.used += offset;
-            ptr += offset;
-        }
-
-        return @ptrFromInt(ptr);
-    }
-
-    pub fn free(self: *Arena, T: type, size: u32) void {
-        const length = @sizeOf(T) * size;
-        if (length > self.used) @panic("Arena do not have enough size");
-        self.used -= length;
-    }
-};
+const Arena = @import("allocator.zig").Arena;
+const Range = util.Range;
 
 pub fn Vec(T: type) type {
     return struct {
@@ -77,17 +11,24 @@ pub fn Vec(T: type) type {
 
         const Self = @This();
 
-        pub fn init(size: u32, arena: *Arena) Self {
-            return .{
+        pub fn new(size: u32, arena: *Arena) Self {
+            return Self{
                 .items = arena.alloc(T, size),
                 .capacity = size,
                 .len = 0,
             };
         }
 
+        pub fn from_array(items: []T) Self {
+            return Self{
+                .items = items.ptr,
+                .len = @intCast(items.len),
+                .capacity = @intCast(items.len),
+            };
+        }
+
         pub fn push(self: *Self, item: T) void {
-            if (self.len >= self.capacity)
-                @panic("Vec does not have enough size");
+            if (self.len >= self.capacity) @panic("Vec does not have enough size");
 
             self.items[self.len] = item;
             self.len += 1;
@@ -104,97 +45,92 @@ pub fn Vec(T: type) type {
             self.len += @intCast(items.len);
         }
 
-        pub fn extend_insert(self: *Self, index: u32, items: []const u8) void {
-            const diff = self.len - index;
+        pub fn extend_range(self: *Self, items: []const T) Range {
+            const start = self.len;
+            self.extend(items);
 
-            for (0..diff) |i| {
-                self.items[index + items.len + diff - i - 1] = self.items[
-                    self.len - i - 1
-                ];
-            }
-
-            for (0..items.len) |i| {
-                self.items[index + items.len - i - 1] = items[
-                    items.len - i - 1
-                ];
-            }
-
-            self.len += @intCast(items.len);
+            return Range.new(start, self.len);
         }
 
-        pub fn get(self: *Self, index: u32) *T {
-            return &self.items[index];
-        }
+        pub fn eql(self: *const Self, other: Self) bool {
+            if (self.len != other.len) return false;
 
-        pub fn clear(self: *Self) void {
-            self.len = 0;
-        }
-
-        pub fn last(self: *Self) *T {
-            return &self.items[self.len - 1];
-        }
-
-        pub fn offset(self: *const Self, index: u32) []const T {
-            return self.items[index..self.len];
-        }
-    };
-}
-
-pub fn HashMap(T: type) type {
-    return struct {
-        value: [*]T,
-        key: [*][]const u8,
-        convert: [*]u8,
-        len: u32,
-        capacity: u32,
-
-        const Self = @This();
-        pub fn init(len: u32, arena: *Arena) Self {
-            if (len > 256) @panic("Should not be greater than 256");
-
-            const key = arena.alloc([]const u8, len);
-            const value = arena.alloc(T, len);
-            const convert = arena.alloc(u8, len);
-
-            @memset(key[0..len], "");
-            return .{
-                .value = value,
-                .key = key,
-                .capacity = len,
-                .convert = convert,
-                .len = 0,
-            };
-        }
-
-        fn hash(key: []const u8) u32 {
-            var h: u32 = 0;
-
-            for (0..key.len) |i| {
-                h += @intCast(key[i] + i);
-            }
-
-            return h;
-        }
-
-        fn eql(key: []const u8, other: []const u8) bool {
-            if (key.len != other.len) return false;
-
-            for (0..key.len) |i| {
-                if (key[i] != other[i]) return false;
+            for (0..self.len) |i| {
+                if (self.items[i] != other.items[i]) return false;
             }
 
             return true;
         }
 
-        pub fn push(self: *Self, key: []const u8, item: T) void {
-            const h = hash(key);
+        pub fn get(self: *const Self, index: u32) *T {
+            if (index >= self.len) @panic("Vec does not have enough size");
+
+            return &self.items[index];
+        }
+
+        pub fn last(self: *const Self) *T {
+            if (self.len == 0) @panic("Vec len is zero");
+
+            return &self.items[self.len - 1];
+        }
+
+        pub fn pop(self: *Self) T {
+            if (self.len == 0) @panic("Vec len is zero");
+
+            self.len -= 1;
+            return self.items[self.len];
+        }
+
+        pub fn buffer(self: *const Self) []T {
+            return self.items[self.len..self.capacity];
+        }
+
+        pub fn range(self: *const Self, r: Range) []const T {
+            if (r.start > r.end) @panic("Start boundary greater than end");
+            if (r.end > self.len) @panic("Out of bounds");
+
+            return self.items[r.start..r.end];
+        }
+
+        pub fn content(self: *const Self) []const T {
+            return self.range(Range.new(0, self.len));
+        }
+
+        pub fn clear(self: *Self) void {
+            self.len = 0;
+        }
+    };
+}
+
+pub fn RangeMap(T: type) type {
+    return struct {
+        value: [*]T,
+        key: [*]Range,
+        capacity: u32,
+
+        const Self = @This();
+
+        pub fn new(size: u32, arena: *Arena) Self {
+            const key = arena.alloc(Range, size);
+            const value = arena.alloc(T, size);
+
+            @memset(key[0..size], Range.new(0, 0));
+
+            return .{
+                .value = value,
+                .key = key,
+                .capacity = size,
+            };
+        }
+
+        pub fn push(self: *Self, key: Range, item: T, buffer: Vec(u8)) void {
+            const h = util.hash(buffer.range(key));
 
             var code = h % self.capacity;
             var count: u32 = 0;
 
-            while (self.key[code].len > 0) {
-                if (count >= self.capacity) @panic("No more space");
-                if (eql(key, self.key[code])) {
+            while (self.key[code].end > 0 and count < self.capacity) {
+                if (key.eql(self.key[code], buffer)) {
                     break;
                 }
 
@@ -202,21 +138,21 @@ pub fn HashMap(T: type) type {
                 count += 1;
             }
 
-            self.value[self.len] = item;
-            self.convert[code] = @intCast(self.len);
+            if (count >= self.capacity) @panic("No more space");
+
+            self.value[code] = item;
             self.key[code] = key;
-            self.len += 1;
         }
 
-        pub fn get(self: *const Self, key: []const u8) ?u32 {
-            const h = hash(key);
+        pub fn get(self: *const Self, key: Range, buffer: Vec(u8)) ?*T {
+            const h = util.hash(buffer.range(key));
 
             var count: u32 = 0;
             var code = h % self.capacity;
 
-            while (self.key[code].len > 0 and count < self.capacity) {
-                if (eql(self.key[code], key)) {
-                    return self.convert[code];
+            while (self.key[code].end > 0 and count < self.capacity) {
+                if (key.eql(self.key[code], buffer)) {
+                    return &self.value[code];
                 }
 
                 code = (code + 1) % self.capacity;
@@ -226,13 +162,40 @@ pub fn HashMap(T: type) type {
             return null;
         }
 
-        pub fn last(self: *Self) *T {
-            return &self.value[self.len - 1];
+        pub fn clear(self: *Self) void {
+            @memset(self.key[0..self.capacity], Range.new(0, 0));
+        }
+    };
+}
+
+pub fn Iter(T: type) type {
+    return struct {
+        vec: *const Vec(T),
+        index: u32,
+
+        const Self = @This();
+        pub fn new(vec: *const Vec(T)) Self {
+            return Self{
+                .vec = vec,
+                .index = 0,
+            };
         }
 
-        pub fn clear(self: *Self) void {
-            @memset(self.key[0..self.capacity], "");
-            self.len = 0;
+        pub fn next(self: *Self) ?*T {
+            if (self.index >= self.vec.len) {
+                return null;
+            } else {
+                self.index += 1;
+                return self.vec.get(self.index - 1);
+            }
+        }
+
+        pub fn has_next(self: *const Self) bool {
+            return self.index < self.vec.len;
+        }
+
+        pub fn consume(self: *Self) void {
+            self.index += 1;
         }
     };
 }

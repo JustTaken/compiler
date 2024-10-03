@@ -1,34 +1,25 @@
 const std = @import("std");
+const allocator = @import("allocator.zig");
 
-const Arena = @import("collections.zig").Arena;
-const Lexer = @import("lexer.zig").Lexer;
+const Arena = allocator.Arena;
 const Parser = @import("parser.zig").Parser;
-const Generator = @import("generator.zig").Generator;
-
-const ALLOCATION_LIMIT: u32 = 1024 * 24;
+const TypeChecker = @import("checker.zig").TypeChecker;
 
 pub fn main() !void {
-    var arena = Arena.malloc(ALLOCATION_LIMIT);
+    const buffer = allocator.malloc(2);
+    defer allocator.free(buffer);
+
+    var arena = Arena.new(buffer);
     var args = std.process.args();
+
     const program_name = args.next().?;
+    _ = program_name;
 
-    var lexer = Lexer.init(&arena);
-    defer lexer.deinit();
-
-    var parser = Parser.init(&arena, &lexer);
+    var parser = Parser.new(args.next().?, &arena);
     defer parser.deinit();
 
-    var generator = Generator.init("zig-out/out.asm", &parser, &arena);
+    var checker = TypeChecker.new(&arena);
 
-    if (args.next()) |arg| {
-        lexer.set_path(arg);
-        lexer.tokenize();
-        parser.parse();
-        generator.generate();
-        generator.reset();
-    } else {
-        std.debug.print("usage:\n", .{});
-        std.debug.print("{s} path\n", .{program_name});
-    }
-
+    _ = parser.next();
+    _ = checker.check(&parser);
 }
