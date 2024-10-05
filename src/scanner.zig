@@ -262,6 +262,8 @@ pub const Scanner = struct {
 
 test "Tokenizing one function" {
     var arena = Arena.new(allocator.malloc(1));
+    defer arena.deinit();
+
     var scanner = Scanner.new("zig-out/function.lang", &arena);
     defer scanner.deinit();
 
@@ -270,7 +272,9 @@ test "Tokenizing one function" {
         .keyword,    .identifier, .symbol,     .identifier, .symbol,     .identifier, .symbol,  .identifier,
         .symbol,     .identifier, .symbol,     .symbol,     .identifier, .symbol,     .keyword, .keyword,
         .identifier, .symbol,     .identifier, .symbol,     .number,     .operator,   .symbol,  .number,
-        .operator,   .number,     .operator,   .number,     .symbol,     .symbol,     .symbol,  .eof,
+        .operator,   .number,     .operator,   .number,     .symbol,     .symbol,  
+        .keyword, .identifier, .symbol, .identifier, .symbol, .identifier, .operator, .number,
+        .symbol, .identifier, .symbol, .eof,
     };
 
     for (expect) |kind| {

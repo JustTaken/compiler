@@ -1,4 +1,5 @@
 const std = @import("std");
+const util = @import("util.zig");
 
 pub fn malloc(pages: usize) []u8 {
     const buffer = std.posix.mmap(
@@ -51,14 +52,10 @@ pub const Arena = struct {
         return @ptrFromInt(ptr);
     }
 
-    pub fn free(self: *Arena, T: type, size: u32) void {
-        const length = @sizeOf(T) * size;
-
-        if (length > self.used) @panic("Arena do not have enough size");
-        self.used -= length;
-    }
-
-    pub fn clear(self: *Arena) void {
+    pub fn deinit(self: *Arena) void {
+        const ptr: [*]const u8 = @ptrCast(self.ptr);
+        free(ptr[0..self.capacity]);
+        util.print("Arena usage: {}\n", .{self.used});
         self.used = 0;
     }
 };

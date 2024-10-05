@@ -8,8 +8,8 @@ pub const ConstantKind = enum(u8) {
 
 pub const Constant = struct {
     kind: ConstantKind,
-    range: Range,
     typ: Index,
+    range: Range,
 
     pub fn new(range: Range, kind: ConstantKind) Constant {
         return Constant {
@@ -21,6 +21,10 @@ pub const Constant = struct {
 
     pub fn set_type(self: *Constant, typ: Index) void {
         self.typ = typ;
+    }
+
+    pub fn get_type(self: *const Constant) Index {
+        return self.typ;
     }
 
     pub fn is_variable(self: *const Constant) bool {

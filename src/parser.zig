@@ -8,7 +8,7 @@ const Constant = @import("value.zig").Constant;
 const Scanner = @import("scanner.zig").Scanner;
 const Token = @import("scanner.zig").Token;
 
-const Instruction = enum(u8) {
+pub const Instruction = enum(u8) {
     Not, Equal, Negate, Greater, Less, Add, Subtract, Multiply, Divide, False,
     True, Nil, Constant, Let, Mut, Procedure, Argument, Parameter, Ret, Call,
 };
@@ -78,8 +78,8 @@ pub const Parser = struct {
             .current = Token.new(.eof, .{ .eof = {} }),
             .previous = Token.new(.eof, .{ .eof = {} }),
             .instructions = Vec(Instruction).new(128, arena),
-            .constants = Vec(Constant).new(10, arena),
-            .ranges = Vec(Range).new(10, arena),
+            .constants = Vec(Constant).new(64, arena),
+            .ranges = Vec(Range).new(64, arena),
         };
 
         _ = self.advance();
@@ -321,7 +321,9 @@ fn string(parser: *Parser) void {
 }
 
 test "Parsing one function" {
-    var arena = Arena.new(allocator.malloc(1));
+    var arena = Arena.new(allocator.malloc(2));
+    defer arena.deinit();
+
     var parser = Parser.new("zig-out/function.lang", &arena);
     defer parser.deinit();
 
@@ -329,7 +331,8 @@ test "Parsing one function" {
 
     var array = [_]Instruction {
         .Parameter, .Parameter, .Constant, .Constant, .Constant, .Add,
-        .Constant, .Add, .Multiply, .Let, .Mut, .Procedure,
+        .Constant, .Add, .Multiply, .Let, .Mut, .Constant, .Constant,
+        .Add, .Let, .Constant, .Procedure,
     };
 
     const expect = Vec(Instruction).from_array(&array);

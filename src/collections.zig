@@ -81,6 +81,10 @@ pub fn Vec(T: type) type {
             return self.items[self.len];
         }
 
+        pub fn get_back(self: *const Self, index: usize) T {
+            return self.items[self.len - index - 1];
+        }
+
         pub fn buffer(self: *const Self) []T {
             return self.items[self.len..self.capacity];
         }
@@ -123,7 +127,7 @@ pub fn RangeMap(T: type) type {
             };
         }
 
-        pub fn push(self: *Self, key: Range, item: T, buffer: Vec(u8)) void {
+        pub fn push(self: *Self, key: Range, item: T, buffer: *const Vec(u8)) void {
             const h = util.hash(buffer.range(key));
 
             var code = h % self.capacity;
@@ -144,7 +148,7 @@ pub fn RangeMap(T: type) type {
             self.key[code] = key;
         }
 
-        pub fn get(self: *const Self, key: Range, buffer: Vec(u8)) ?*T {
+        pub fn get(self: *const Self, key: Range, buffer: *const Vec(u8)) ?*T {
             const h = util.hash(buffer.range(key));
 
             var count: u32 = 0;

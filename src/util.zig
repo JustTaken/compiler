@@ -3,8 +3,8 @@ const Vec = @import("collections.zig").Vec;
 
 pub const Index = u16;
 pub const Range = struct {
-    start: u16,
-    end: u16,
+    start: Index,
+    end: Index,
 
     pub fn new(start: u32, end: u32) Range {
         return Range {
@@ -13,7 +13,7 @@ pub const Range = struct {
         };
     }
 
-    pub fn eql(self: *const Range, other: Range, string: Vec(u8)) bool {
+    pub fn eql(self: *const Range, other: Range, string: *const Vec(u8)) bool {
         const first = string.range(self.*);
         const second = string.range(other);
 
