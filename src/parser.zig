@@ -71,7 +71,7 @@ const Rule = struct {
                 switch (token.value.operator) {
                     .Dash => return new(unary, binary, .Term),
                     .Plus => return new(null, binary, .Term),
-                    .Slash, .Star => return new(null, binary, .Factor)
+                    .Slash, .Star => return new(null, binary, .Factor),
                     .EqualEqual, .BangEqual => return new(null, binary, .Factor),
                     .Bang => return new(null, binary, .Equality),
                     .Greater, .GreaterEqual, .Less, .LessEqual => return new(null, binary, .Comparison),
