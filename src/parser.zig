@@ -9,12 +9,40 @@ const Scanner = @import("scanner.zig").Scanner;
 const Token = @import("scanner.zig").Token;
 
 pub const Instruction = enum(u8) {
-    Not, Equal, Negate, Greater, Less, Add, Subtract, Multiply, Divide, False,
-    True, Nil, Constant, Let, Mut, Procedure, Argument, Parameter, Ret, Call,
+    Not,
+    Equal,
+    Negate,
+    Greater,
+    Less,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    False,
+    True,
+    Nil,
+    Constant,
+    Let,
+    Mut,
+    Procedure,
+    Argument,
+    Parameter,
+    Ret,
+    Call,
 };
 
 const Precedence = enum(u8) {
-    None, Assignment, Or, And, Equality, Comparison, Term, Factor, Unary, Call, Primary,
+    None,
+    Assignment,
+    Or,
+    And,
+    Equality,
+    Comparison,
+    Term,
+    Factor,
+    Unary,
+    Call,
+    Primary,
 };
 
 const Fn = *const fn (parser: *Parser) void;
@@ -24,7 +52,7 @@ const Rule = struct {
     precedence: Precedence,
 
     fn new(prefix: ?Fn, infix: ?Fn, precedence: Precedence) Rule {
-        return Rule {
+        return Rule{
             .prefix = prefix,
             .infix = infix,
             .precedence = precedence,
@@ -43,11 +71,10 @@ const Rule = struct {
                 switch (token.value.operator) {
                     .Dash => return new(unary, binary, .Term),
                     .Plus => return new(null, binary, .Term),
-                    .Slash, .Star => return new(null, binary, .Factor),
+                    .Slash, .Star => return new(null, binary, .Factor)
                     .EqualEqual, .BangEqual => return new(null, binary, .Factor),
                     .Bang => return new(null, binary, .Equality),
-                    .Greater, .GreaterEqual,
-                    .Less, .LessEqual => return new(null, binary, .Comparison),
+                    .Greater, .GreaterEqual, .Less, .LessEqual => return new(null, binary, .Comparison),
                 }
             },
             .keyword => {
@@ -70,15 +97,17 @@ pub const Parser = struct {
     previous: Token,
     instructions: Vec(Instruction),
     constants: Vec(Constant),
+    error_buffer: Vec(u8),
     ranges: Vec(Range),
 
     pub fn new(path: []const u8, arena: *Arena) Parser {
-        var self = Parser {
+        var self = Parser{
             .scanner = Scanner.new(path, arena),
             .current = Token.new(.eof, .{ .eof = {} }),
             .previous = Token.new(.eof, .{ .eof = {} }),
             .instructions = Vec(Instruction).new(128, arena),
             .constants = Vec(Constant).new(64, arena),
+            .error_buffer = Vec(u8).new(512, arena),
             .ranges = Vec(Range).new(64, arena),
         };
 
@@ -96,7 +125,11 @@ pub const Parser = struct {
         if (self.current.eql(token)) {
             self.advance();
         } else {
-            @panic("Consume wrong token");
+            self.error_buffer.extend("Expected token \"");
+            self.error_buffer.extend(token.to_string());
+            self.error_buffer.extend("\", found \"");
+            self.error_buffer.extend(self.current.to_string());
+            self.error_buffer.extend("\"\n");
         }
     }
 
@@ -117,7 +150,11 @@ pub const Parser = struct {
 
         if (rule.prefix) |f| {
             f(self);
-        } else @panic("Should have this function");
+        } {
+            self.error_buffer.extend("token \"");
+            self.error_buffer.extend(self.previous.to_string());
+            self.error_buffer.extend("\" do not have prefix function\n");
+        }
 
         rule = Rule.from_token(self.current);
         while (@intFromEnum(precedence) <= @intFromEnum(rule.precedence)) {
@@ -170,7 +207,11 @@ fn unary(parser: *Parser) void {
     switch (operator) {
         .Bang => parser.instructions.push(.Not),
         .Dash => parser.instructions.push(.Negate),
-        else => @panic("Not handled yet"),
+        else => {
+            parser.error_buffer.extend("operator \"");
+            parser.error_buffer.extend(operator.to_string());
+            parser.error_buffer.extend("\", cannot be unary\n");
+        },
     }
 }
 
@@ -191,7 +232,11 @@ fn binary(parser: *Parser) void {
         .Dash => parser.instructions.push(.Subtract),
         .Star => parser.instructions.push(.Multiply),
         .Slash => parser.instructions.push(.Divide),
-        else => @panic("Should not be here"),
+        else => {
+            parser.error_buffer.extend("operator \"");
+            parser.error_buffer.extend(operator.to_string());
+            parser.error_buffer.extend("\", cannot be binary\n");
+        },
     }
 }
 
@@ -202,7 +247,11 @@ fn literal(parser: *Parser) void {
         .False => parser.instructions.push(.False),
         .True => parser.instructions.push(.True),
         .Nil => parser.instructions.push(.Nil),
-        else => @panic("Should not be here"),
+        else => {
+            parser.error_buffer.extend("keyword \"");
+            parser.error_buffer.extend(keyword.to_string());
+            parser.error_buffer.extend("\", cannot be value\n");
+        },
     }
 }
 
@@ -242,7 +291,7 @@ fn procedure(parser: *Parser) void {
         parser.consume(Token.new(.identifier, undefined));
 
         parser.instructions.push(.Parameter);
-        parser.ranges.extend(&.{param.value.identifier, kind.value.identifier});
+        parser.ranges.extend(&.{ param.value.identifier, kind.value.identifier });
     }
 
     parser.consume(Token.new(.symbol, .{ .symbol = .DoubleColon }));
@@ -257,7 +306,7 @@ fn procedure(parser: *Parser) void {
     }
 
     parser.instructions.push(.Procedure);
-    parser.ranges.extend(&.{iden.value.identifier, ret_iden.value.identifier});
+    parser.ranges.extend(&.{ iden.value.identifier, ret_iden.value.identifier });
 }
 
 fn statement(parser: *Parser) void {
@@ -271,16 +320,20 @@ fn statement(parser: *Parser) void {
                 .Let => variable(parser),
                 .Procedure => procedure(parser),
                 .Type => typ(parser),
-                else => @panic("should not be here"),
+                else => {
+                    parser.error_buffer.extend("keyword \"");
+                    parser.error_buffer.extend(token.value.keyword.to_string());
+                    parser.error_buffer.extend("\" cannot be statement predecesor\n");
+                },
             }
         },
-        else => expression(parser)
+        else => expression(parser),
     }
 }
 
 fn call(parser: *Parser) void {
     while (!parser.match(Token.new(.symbol, .{ .symbol = .ParentesisRight }))) {
-        _ = parser.match(Token.new(.symbol, .{ .symbol = .Comma} ));
+        _ = parser.match(Token.new(.symbol, .{ .symbol = .Comma }));
 
         expression(parser);
     }
@@ -309,7 +362,7 @@ fn variable(parser: *Parser) void {
         parser.instructions.push(.Mut);
     }
 
-    parser.ranges.extend(&.{iden.value.identifier, kind.value.identifier});
+    parser.ranges.extend(&.{ iden.value.identifier, kind.value.identifier });
 }
 
 fn typ(parser: *Parser) void {
@@ -329,10 +382,10 @@ test "Parsing one function" {
 
     try util.assert(parser.next());
 
-    var array = [_]Instruction {
-        .Parameter, .Parameter, .Constant, .Constant, .Constant, .Add,
-        .Constant, .Add, .Multiply, .Let, .Mut, .Constant, .Constant,
-        .Add, .Let, .Constant, .Procedure,
+    var array = [_]Instruction{
+        .Parameter, .Parameter, .Constant, .Constant, .Constant,  .Add,
+        .Constant,  .Add,       .Multiply, .Let,      .Mut,       .Constant,
+        .Constant,  .Add,       .Let,      .Constant, .Procedure,
     };
 
     const expect = Vec(Instruction).from_array(&array);
@@ -340,4 +393,3 @@ test "Parsing one function" {
     try util.assert(expect.eql(parser.instructions));
     try util.assert(!parser.next());
 }
-

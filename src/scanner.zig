@@ -36,6 +36,20 @@ pub const Keyword = enum(u8) {
 
         return null;
     }
+
+    pub fn to_string(self: Keyword) []const u8 {
+        return switch (self) {
+            .Let => "let",
+            .Procedure => "procedure",
+            .Mut => "mut",
+            .Return => "return",
+            .Match => "match",
+            .Type => "type",
+            .True => "true",
+            .False => "false",
+            .Nil => "nil",
+        };
+    }
 };
 
 pub const Operator = enum(u8) {
@@ -50,6 +64,23 @@ pub const Operator = enum(u8) {
     GreaterEqual,
     Less,
     LessEqual,
+
+    pub fn to_string(self: Operator) []const u8 {
+        return switch (self) {
+            .Star => "star",
+            .Slash => "slash",
+            .Plus => "plus",
+            .Dash => "dash",
+            .Bang => "bang",
+            .BangEqual => "bangequal",
+            .EqualEqual => "equalequal",
+            .Greater => "greater",
+            .GreaterEqual => "greaterequal",
+            .Less => "less",
+            .LessEqual => "lessequal",
+        };
+    }
+
 };
 
 pub const Symbol = enum(u8) {
@@ -64,6 +95,22 @@ pub const Symbol = enum(u8) {
     ParentesisRight,
     Semicolon,
     Comma,
+
+    pub fn to_string(self: Symbol) []const u8 {
+        return switch (self) {
+            .Equal => "equal",
+            .Dot => "dot",
+            .DoubleColon => "doublecolon",
+            .BraceLeft => "braceleft",
+            .BraceRight => "braceright",
+            .SquareBracketLeft => "squarebracketleft",
+            .SquareBracketRight => "squarebracketright",
+            .ParentesisLeft => "parentesisleft",
+            .ParentesisRight => "parentesisright",
+            .Semicolon => "semicolon",
+            .Comma => "comma",
+        };
+    }
 };
 
 pub const TokenKind = enum(u8) {
@@ -104,6 +151,18 @@ pub const Token = struct {
             .operator => self.value.operator == other.value.operator,
             .keyword => self.value.keyword == other.value.keyword,
             .symbol => self.value.symbol == other.value.symbol,
+        };
+    }
+
+    pub fn to_string(self: *const Token) []const u8 {
+        return switch (self.kind) {
+            .identifier => "identifier",
+            .number => "number",
+            .string => "string",
+            .operator => self.value.operator.to_string(),
+            .keyword => self.value.keyword.to_string(),
+            .symbol => self.value.symbol.to_string(),
+            .eof => "eof",
         };
     }
 };

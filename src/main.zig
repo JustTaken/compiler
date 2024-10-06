@@ -19,10 +19,11 @@ pub fn main() void {
     const program_name = args.next().?;
     _ = program_name;
 
-    const default_output_path = "zig-out/a.out";
+    const default_output_path = "zig-out/output.ll";
+    const input_path = args.next().?;
     const output_path = if (std.os.argv.len > 2) args.next().? else default_output_path;
 
-    var generator = Generator.new(args.next().?, output_path, &arena);
+    var generator = Generator.new(input_path, output_path, &arena);
     defer generator.deinit();
 
     generator.compile();

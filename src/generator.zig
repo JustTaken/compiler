@@ -21,6 +21,7 @@ pub const Generator = struct {
     parameters: Vec(Index),
     buffer: Vec(u8),
     constants: Vec(Const),
+    aliases: RangeMap(Const),
     variables: RangeMap(Index),
     procedures: RangeMap(Procedure),
     type_checker: TypeChecker,
@@ -39,11 +40,12 @@ pub const Generator = struct {
             .buffer = Vec(u8).new(1024, arena),
             .constants = Vec(Const).new(10, arena),
             .variables = RangeMap(Index).new(10, arena),
+            .aliases = RangeMap(Const).new(10, arena),
             .procedures = RangeMap(Procedure).new(10, arena),
             .type_checker = TypeChecker.new(arena),
             .parser = Parser.new(input_path, arena),
             .temp_builder = TempValueBuilder.new(arena),
-            .file = std.fs.cwd().openFile(output_path, .{}) catch unreachable,
+            .file = std.fs.cwd().openFile(output_path, .{ .mode = .write_only }) catch unreachable,
             .last_parameter_offset = 0,
         };
     }
@@ -78,6 +80,7 @@ pub const Generator = struct {
                     },
                     .Add, .Subtract, .Multiply => self.type_checker.register_binary_operation(
                         &self.variables,
+                        &self.aliases,
                         &self.constants,
                         constants,
                         words,
@@ -106,11 +109,21 @@ pub const Generator = struct {
                             words,
                         );
 
-                        self.write_variable(
-                            words.range(name_range),
-                            self.constants.pop(),
-                        );
-                        self.variables.push(name_range, index, words);
+                        const constant = self.constants.pop();
+                        const var_name = words.range(name_range);
+
+                        if (constant.is_raw()) {
+                            const range = self.parser.scanner.words.extend_range(var_name,);
+
+                            self.aliases.push(range, constant, &self.parser.scanner.words,);
+                        } else {
+                            self.write_variable(
+                                var_name,
+                                constant,
+                            );
+
+                            self.variables.push(name_range, index, words);
+                        }
                     },
                     .Parameter => {
                         const name_range = ranges.next().?.*;
@@ -142,35 +155,63 @@ pub const Generator = struct {
                             self.parameters.len - self.last_parameter_offset,
                         );
 
+                        const procedure = Procedure.new(
+                            self.last_parameter_offset,
+                            parameter_len,
+                            index,
+                        );
+
                         self.procedures.push(
                             name_range,
-                            Procedure.new(
-                                self.last_parameter_offset,
-                                parameter_len,
-                                index,
-                            ),
+                            procedure,
                             words,
                         );
+
+                        self.buffer.extend("}\n");
+                        const write_start = self.buffer.len;
+
+                        self.buffer.extend("define ");
+                        self.buffer.extend(words.range(type_range));
+                        self.buffer.extend(" @");
+                        self.buffer.extend(words.range(name_range));
+                        self.buffer.extend("(");
+
+                        for (0..procedure.len) |i| {
+                            const param_type_range = self.type_checker.get_type_range(
+                                self.parameters.items[procedure.offset + i],
+                            );
+                            self.buffer.extend(words.range(param_type_range));
+
+                            if (i + 1 < procedure.len) {
+                                self.buffer.extend(", ");
+                            }
+                        }
+
+                        self.buffer.extend(") {\n");
+                        self.buffer.extend("  entry:\n");
+
+                        _ = self.file.write(
+                            self.buffer.content()[write_start..],
+                        ) catch unreachable;
+
+                        _ = self.file.write(
+                            self.buffer.content()[0..write_start],
+                        ) catch unreachable;
+
+                        self.buffer.clear();
+                        self.variables.clear();
+                        self.aliases.clear();
+                        self.temp_builder.reset();
 
                         self.last_parameter_offset = @intCast(self.parameters.len);
                     },
                     else => {},
                 }
             }
-
-            // for (self.parser.constants.content()) |constant| {
-
-                // const range = self.type_checker.types.items[constant.get_type()];
-                // const type_name = words.range(range);
-                // util.print("type: {s}\n", .{type_name});
-
-                // try util.assert(util.equal(u8, type_name, "i32"));
-            // }
         }
     }
 
     pub fn deinit(self: *const Generator) void {
-        util.print("{s}\n", .{self.buffer.content()});
         self.file.close();
         self.parser.deinit();
     }

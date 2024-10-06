@@ -192,7 +192,7 @@ pub const Const = union(ConstKind) {
         };
     }
 
-    fn is_raw(self: Const) bool {
+    pub fn is_raw(self: Const) bool {
         return switch (self) {
             .raw => true,
             else => false,
@@ -269,25 +269,17 @@ pub const Const = union(ConstKind) {
 };
 
 pub const TypeChecker = struct {
-    constants: Vec(Const),
     consts: Vec(Const),
     types: Vec(Range),
     type_indices: RangeMap(Index),
     error_content_buffer: Vec(u8),
 
     pub fn new(arena: *Arena) TypeChecker {
-        // util.print("size of Const: {}\n", .{@sizeOf(Const)});
-        // util.print("size of ConstantBinary: {}\n", .{@sizeOf(ConstantBinary)});
-        // util.print("size of ConstantCall: {}\n", .{@sizeOf(ConstantCall)});
-        // util.print("size of Constant: {}\n", .{@sizeOf(Constant)});
-        // util.print("size of ConstKind: {}\n", .{@sizeOf(ConstKind)});
-
         var self = TypeChecker{
-            .constants = Vec(Const).new(64, arena),
             .consts = Vec(Const).new(64, arena),
             .types = Vec(Range).new(64, arena),
             .type_indices = RangeMap(Index).new(64, arena),
-            .error_content_buffer = Vec(u8).new(1024, arena),
+            .error_content_buffer = Vec(u8).new(512, arena),
         };
 
         self.types.push(Range.new(0, 0));
@@ -334,6 +326,13 @@ pub const TypeChecker = struct {
 
             return index;
         }
+    }
+
+    pub fn get_type_range(
+        self: *const TypeChecker,
+        index: Index,
+    ) Range {
+        return self.types.items[index];
     }
 
     pub fn register_call(
@@ -387,6 +386,7 @@ pub const TypeChecker = struct {
     pub fn register_binary_operation(
         self: *TypeChecker,
         variables: *const RangeMap(Index),
+        aliases: *const RangeMap(Const),
         constants: *Vec(Const),
         raw_constants: [*]Constant,
         words: *const Vec(u8),
@@ -401,26 +401,38 @@ pub const TypeChecker = struct {
         const second = self.consts.last();
 
         if (first.is_variable(raw_constants)) {
-            if (variables.get(first.get_range(raw_constants), words)) |index| {
+            const name_range = first.get_range(raw_constants);
+
+            if (variables.get(name_range, words)) |index| {
                 _ = first.set_type(index.*, &self.consts, raw_constants);
             } else {
-                const name = words.range(first.get_range(raw_constants));
+                if (aliases.get(name_range, words)) |constant| {
+                    first.* = constant.*;
+                } else {
+                    const name = words.range(name_range);
 
-                self.error_content_buffer.extend("Undefined variable\"");
-                self.error_content_buffer.extend(name);
-                self.error_content_buffer.extend("\"\n");
+                    self.error_content_buffer.extend("Undefined variable\"");
+                    self.error_content_buffer.extend(name);
+                    self.error_content_buffer.extend("\"\n");
+                }
             }
         }
 
         if (second.is_variable(raw_constants)) {
-            if (variables.get(second.get_range(raw_constants), words)) |index| {
+            const name_range = second.get_range(raw_constants);
+
+            if (variables.get(name_range, words)) |index| {
                 _ = second.set_type(index.*, &self.consts, raw_constants);
             } else {
-                const name = words.range(second.get_range(raw_constants));
+                if (aliases.get(name_range, words)) |constant| {
+                    second.* = constant.*;
+                } else {
+                    const name = words.range(name_range);
 
-                self.error_content_buffer.extend("Undefined variable\"");
-                self.error_content_buffer.extend(name);
-                self.error_content_buffer.extend("\"\n");
+                    self.error_content_buffer.extend("Undefined variable\"");
+                    self.error_content_buffer.extend(name);
+                    self.error_content_buffer.extend("\"\n");
+                }
             }
         }
 
@@ -464,7 +476,6 @@ pub const TypeChecker = struct {
         words: *const Vec(u8),
     ) Index {
         const index = self.get_type_index(type_range, words);
-        // const constant = self.constants.pop();
 
         if (!constants.last().set_type(index, &self.consts, raw_constants)) {
             const existing = constants.last().get_type(&self.consts, raw_constants);
@@ -501,8 +512,6 @@ pub const TypeChecker = struct {
         const index = self.get_type_index(type_range, words);
 
         if (constants.len > 0) {
-            // const constant = self.constants.pop();
-
             if (!constants.last().set_type(index, &self.consts, raw_constants)) {
                 const existing = constants.last().get_type(&self.consts, raw_constants);
                 const existing_cont = words.range(
