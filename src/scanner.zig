@@ -16,7 +16,6 @@ pub const Keyword = enum(u8) {
     Type,
     True,
     False,
-    Nil,
 
     fn from_string(string: []const u8) ?Keyword {
         switch (string[0]) {
@@ -27,7 +26,6 @@ pub const Keyword = enum(u8) {
             else if (util.equal(u8, "true", string)) return Keyword.True,
             'f' => if (util.equal(u8, "false", string)) return Keyword.False,
             'l' => if (util.equal(u8, "let", string)) return Keyword.Let,
-            'n' => if (util.equal(u8, "nil", string)) return Keyword.Nil,
             'm' => if (util.equal(u8, "mut", string))
                 return Keyword.Mut
             else if (util.equal(u8, "match", string)) return Keyword.Match,
@@ -47,7 +45,6 @@ pub const Keyword = enum(u8) {
             .Type => "type",
             .True => "true",
             .False => "false",
-            .Nil => "nil",
         };
     }
 };
@@ -80,7 +77,6 @@ pub const Operator = enum(u8) {
             .LessEqual => "lessequal",
         };
     }
-
 };
 
 pub const Symbol = enum(u8) {
@@ -136,6 +132,18 @@ pub const TokenValue = union {
 pub const Token = struct {
     kind: TokenKind,
     value: TokenValue,
+
+    pub const IDEN = Token{ .kind = TokenKind.identifier, .value = undefined };
+    pub const PARENTESISLEFT = Token{ .kind = .symbol, .value = .{ .symbol = .ParentesisLeft } };
+    pub const PARENTESISRIGHT = Token{ .kind = .symbol, .value = .{ .symbol = .ParentesisRight } };
+    pub const COMMA = Token{ .kind = .symbol, .value = .{ .symbol = .Comma } };
+    pub const DOUBLECOLON = Token{ .kind = .symbol, .value = .{ .symbol = .DoubleColon } };
+    pub const BRACELEFT = Token{ .kind = .symbol, .value = .{ .symbol = .BraceLeft } };
+    pub const BRACERIGHT = Token{ .kind = .symbol, .value = .{ .symbol = .BraceRight } };
+    pub const MUT = Token{ .kind = .keyword, .value = .{ .keyword = .Mut } };
+    pub const EQUAL = Token{ .kind = .symbol, .value = .{ .symbol = .Equal } };
+    pub const SEMICOLON = Token{ .kind = .symbol, .value = .{ .symbol = .Semicolon} };
+    pub const EOF = Token{ .kind = .eof, .value = undefined };
 
     pub fn new(kind: TokenKind, value: TokenValue) Token {
         return Token{
@@ -331,9 +339,9 @@ test "Tokenizing one function" {
         .keyword,    .identifier, .symbol,     .identifier, .symbol,     .identifier, .symbol,  .identifier,
         .symbol,     .identifier, .symbol,     .symbol,     .identifier, .symbol,     .keyword, .keyword,
         .identifier, .symbol,     .identifier, .symbol,     .number,     .operator,   .symbol,  .number,
-        .operator,   .number,     .operator,   .number,     .symbol,     .symbol,  
-        .keyword, .identifier, .symbol, .identifier, .symbol, .identifier, .operator, .number,
-        .symbol, .identifier, .symbol, .eof,
+        .operator,   .number,     .operator,   .number,     .symbol,     .symbol,     .keyword, .identifier,
+        .symbol,     .identifier, .symbol,     .identifier, .operator,   .number,     .symbol,  .identifier,
+        .symbol,     .eof,
     };
 
     for (expect) |kind| {

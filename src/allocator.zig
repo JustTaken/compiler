@@ -32,6 +32,17 @@ pub const Arena = struct {
         };
     }
 
+    pub fn bytes(self: *Arena, size: u32) []u8 {
+        if (self.used + size > self.capacity) @panic("Arena do not have enough size");
+
+        const ptr: [*]u8 = @ptrCast(self.ptr);
+        const buffer = ptr[self.used..self.used + size];
+
+        self.used += size;
+
+        return buffer;
+    }
+
     pub fn alloc(self: *Arena, T: type, size: u32) [*]T {
         const lenght = @sizeOf(T) * size;
 
@@ -50,6 +61,13 @@ pub const Arena = struct {
         }
 
         return @ptrFromInt(ptr);
+    }
+
+    pub fn create(self: *Arena, T: type, value: T) *T {
+        const ptr = self.alloc(T, 1);
+        ptr[0] = value;
+
+        return @ptrCast(ptr);
     }
 
     pub fn deinit(self: *Arena) void {

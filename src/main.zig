@@ -3,31 +3,30 @@ const allocator = @import("allocator.zig");
 const util = @import("util.zig");
 
 const Arena = allocator.Arena;
-const Generator = @import("generator.zig").Generator;
+const Parser = @import("parser.zig").Parser;
 
 pub fn main() void {
     // const start = try std.time.Instant.now();
-    var arena = Arena.new(allocator.malloc(2));
+    var arena = Arena.new(allocator.malloc(3));
     defer arena.deinit();
 
     var args = std.process.args();
 
-    if (std.os.argv.len < 2) {
-        return;
+    if (std.os.argv.len != 3) {
+        @panic("usage: pass {input path} and {output path}");
     }
 
     const program_name = args.next().?;
     _ = program_name;
 
-    const default_output_path = "zig-out/output.ll";
     const input_path = args.next().?;
-    const output_path = if (std.os.argv.len > 2) args.next().? else default_output_path;
+    const output_path = args.next().?;
 
-    var generator = Generator.new(input_path, output_path, &arena);
-    defer generator.deinit();
+    var parser = Parser.new(input_path, output_path, &arena);
+    defer parser.deinit();
 
-    generator.compile();
-
+    while (parser.next()) {
+    }
 }
 
 test "All" {

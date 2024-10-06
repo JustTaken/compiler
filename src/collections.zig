@@ -45,6 +45,12 @@ pub fn Vec(T: type) type {
             self.len += @intCast(items.len);
         }
 
+        pub fn mult_extend(self: *Self, args: []const []const T) void {
+            for (args) |items| {
+                self.extend(items);
+            }
+        }
+
         pub fn extend_range(self: *Self, items: []const T) Range {
             const start = self.len;
             self.extend(items);
@@ -96,8 +102,12 @@ pub fn Vec(T: type) type {
             return self.items[r.start..r.end];
         }
 
+        pub fn offset(self: *const Self, index: u32) []const T {
+            return self.range(Range.new(index, self.len));
+        }
+
         pub fn content(self: *const Self) []const T {
-            return self.range(Range.new(0, self.len));
+            return self.offset(0);
         }
 
         pub fn clear(self: *Self) void {

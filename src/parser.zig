@@ -7,29 +7,9 @@ const Vec = @import("collections.zig").Vec;
 const Constant = @import("value.zig").Constant;
 const Scanner = @import("scanner.zig").Scanner;
 const Token = @import("scanner.zig").Token;
-
-pub const Instruction = enum(u8) {
-    Not,
-    Equal,
-    Negate,
-    Greater,
-    Less,
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-    False,
-    True,
-    Nil,
-    Constant,
-    Let,
-    Mut,
-    Procedure,
-    Argument,
-    Parameter,
-    Ret,
-    Call,
-};
+const Generator = @import("generator.zig").Generator;
+const TypeChecker = @import("checker.zig").TypeChecker;
+const Instruction = @import("checker.zig").Instruction;
 
 const Precedence = enum(u8) {
     None,
@@ -71,7 +51,7 @@ const Rule = struct {
                 switch (token.value.operator) {
                     .Dash => return new(unary, binary, .Term),
                     .Plus => return new(null, binary, .Term),
-                    .Slash, .Star => return new(null, binary, .Factor)
+                    .Slash, .Star => return new(null, binary, .Factor),
                     .EqualEqual, .BangEqual => return new(null, binary, .Factor),
                     .Bang => return new(null, binary, .Equality),
                     .Greater, .GreaterEqual, .Less, .LessEqual => return new(null, binary, .Comparison),
@@ -79,7 +59,9 @@ const Rule = struct {
             },
             .keyword => {
                 switch (token.value.keyword) {
-                    .True, .False, .Nil => return new(literal, null, .None),
+                    .True,
+                    .False,
+                    => return new(literal, null, .None),
                     else => return new(null, null, .None),
                 }
             },
@@ -92,28 +74,24 @@ const Rule = struct {
 };
 
 pub const Parser = struct {
-    scanner: Scanner,
     current: Token,
     previous: Token,
-    instructions: Vec(Instruction),
-    constants: Vec(Constant),
+    scanner: Scanner,
+    generator: Generator,
+    checker: TypeChecker,
     error_buffer: Vec(u8),
-    ranges: Vec(Range),
 
-    pub fn new(path: []const u8, arena: *Arena) Parser {
-        var self = Parser{
-            .scanner = Scanner.new(path, arena),
-            .current = Token.new(.eof, .{ .eof = {} }),
+    pub fn new(input: []const u8, output: []const u8, arena: *Arena) Parser {
+        var scanner = Scanner.new(input, arena);
+
+        return Parser{
             .previous = Token.new(.eof, .{ .eof = {} }),
-            .instructions = Vec(Instruction).new(128, arena),
-            .constants = Vec(Constant).new(64, arena),
+            .current = scanner.next(),
+            .scanner = scanner,
+            .generator = Generator.new(output, arena),
+            .checker = TypeChecker.new(arena),
             .error_buffer = Vec(u8).new(512, arena),
-            .ranges = Vec(Range).new(64, arena),
         };
-
-        _ = self.advance();
-
-        return self;
     }
 
     fn advance(self: *Parser) void {
@@ -146,17 +124,16 @@ pub const Parser = struct {
     fn parse(self: *Parser, precedence: Precedence) void {
         self.advance();
 
-        var rule = Rule.from_token(self.previous);
-
-        if (rule.prefix) |f| {
+        if (Rule.from_token(self.previous).prefix) |f| {
             f(self);
-        } {
+        }
+        {
             self.error_buffer.extend("token \"");
             self.error_buffer.extend(self.previous.to_string());
             self.error_buffer.extend("\" do not have prefix function\n");
         }
 
-        rule = Rule.from_token(self.current);
+        var rule = Rule.from_token(self.current);
         while (@intFromEnum(precedence) <= @intFromEnum(rule.precedence)) {
             if (rule.infix) |f| {
                 self.advance();
@@ -167,26 +144,16 @@ pub const Parser = struct {
         }
     }
 
-    fn clear(self: *Parser) void {
-        self.instructions.clear();
-        self.ranges.clear();
-        self.constants.clear();
-    }
-
     pub fn next(self: *Parser) bool {
-        self.clear();
-
-        const has_next = !self.match(Token.new(.eof, undefined));
-
-        if (has_next) {
+        if (!self.match(Token.EOF)) {
             statement(self);
-        }
-
-        return has_next;
+            return true;
+        } else return false;
     }
 
     pub fn deinit(self: *const Parser) void {
         self.scanner.deinit();
+        self.generator.deinit();
     }
 };
 
@@ -196,7 +163,7 @@ fn expression(parser: *Parser) void {
 
 fn grouping(parser: *Parser) void {
     expression(parser);
-    parser.consume(Token.new(.symbol, .{ .symbol = .ParentesisRight }));
+    parser.consume(Token.PARENTESISRIGHT);
 }
 
 fn unary(parser: *Parser) void {
@@ -205,8 +172,8 @@ fn unary(parser: *Parser) void {
     parser.parse(.Unary);
 
     switch (operator) {
-        .Bang => parser.instructions.push(.Not),
-        .Dash => parser.instructions.push(.Negate),
+        .Bang => parser.checker.push_instruction(.Not, &parser.scanner.words),
+        .Dash => parser.checker.push_instruction(.Negate, &parser.scanner.words),
         else => {
             parser.error_buffer.extend("operator \"");
             parser.error_buffer.extend(operator.to_string());
@@ -222,16 +189,25 @@ fn binary(parser: *Parser) void {
     parser.parse(@enumFromInt(@intFromEnum(rule.precedence) + 1));
 
     switch (operator) {
-        .BangEqual => parser.instructions.extend(&.{ .Equal, .Not }),
-        .EqualEqual => parser.instructions.push(.Equal),
-        .Greater => parser.instructions.push(.Greater),
-        .GreaterEqual => parser.instructions.extend(&.{ .Less, .Not }),
-        .Less => parser.instructions.push(.Less),
-        .LessEqual => parser.instructions.extend(&.{ .Greater, .Not }),
-        .Plus => parser.instructions.push(.Add),
-        .Dash => parser.instructions.push(.Subtract),
-        .Star => parser.instructions.push(.Multiply),
-        .Slash => parser.instructions.push(.Divide),
+        .BangEqual => {
+            parser.checker.push_instruction(.Equal, &parser.scanner.words);
+            parser.checker.push_instruction(.Not, &parser.scanner.words);
+        },
+        .GreaterEqual => {
+            parser.checker.push_instruction(.Less, &parser.scanner.words);
+            parser.checker.push_instruction(.Not, &parser.scanner.words);
+        },
+        .LessEqual => {
+            parser.checker.push_instruction(.Greater, &parser.scanner.words);
+            parser.checker.push_instruction(.Not, &parser.scanner.words);
+        },
+        .EqualEqual => parser.checker.push_instruction(.Equal, &parser.scanner.words),
+        .Greater => parser.checker.push_instruction(.Greater, &parser.scanner.words),
+        .Less => parser.checker.push_instruction(.Less, &parser.scanner.words),
+        .Plus => parser.checker.push_instruction(.Add, &parser.scanner.words),
+        .Dash => parser.checker.push_instruction(.Subtract, &parser.scanner.words),
+        .Star => parser.checker.push_instruction(.Multiply, &parser.scanner.words),
+        .Slash => parser.checker.push_instruction(.Divide, &parser.scanner.words),
         else => {
             parser.error_buffer.extend("operator \"");
             parser.error_buffer.extend(operator.to_string());
@@ -244,9 +220,8 @@ fn literal(parser: *Parser) void {
     const keyword = parser.previous.value.keyword;
 
     switch (keyword) {
-        .False => parser.instructions.push(.False),
-        .True => parser.instructions.push(.True),
-        .Nil => parser.instructions.push(.Nil),
+        .False => parser.checker.push_boolean(false),
+        .True => parser.checker.push_boolean(true),
         else => {
             parser.error_buffer.extend("keyword \"");
             parser.error_buffer.extend(keyword.to_string());
@@ -258,56 +233,71 @@ fn literal(parser: *Parser) void {
 fn identifier(parser: *Parser) void {
     const range = parser.previous.value.identifier;
 
-    if (parser.match(Token.new(.symbol, .{ .symbol = .ParentesisLeft }))) {
+    if (parser.match(Token.PARENTESISLEFT)) {
         call(parser);
-        parser.ranges.push(range);
+        parser.checker.push_range(range);
+        parser.checker.push_instruction(.Call, &parser.scanner.words);
     } else {
-        parser.instructions.push(.Constant);
-        parser.constants.push(Constant.new(range, .Identifier));
+        parser.checker.push_identifier(range);
     }
 }
 
 fn number(parser: *Parser) void {
-    parser.instructions.push(.Constant);
-    parser.constants.push(Constant.new(parser.previous.value.number, .Number));
+    parser.checker.push_number(parser.previous.value.number);
 }
 
 fn procedure(parser: *Parser) void {
     const iden = parser.current;
 
-    parser.consume(Token.new(.identifier, undefined));
-    parser.consume(Token.new(.symbol, .{ .symbol = .ParentesisLeft }));
+    parser.consume(Token.IDEN);
+    parser.consume(Token.PARENTESISLEFT);
 
-    while (!parser.match(Token.new(.symbol, .{ .symbol = .ParentesisRight }))) {
-        _ = parser.match(Token.new(.symbol, .{ .symbol = .Comma }));
+    while (!parser.match(Token.PARENTESISRIGHT)) {
+        _ = parser.match(Token.COMMA);
 
         const param = parser.current;
 
-        parser.consume(Token.new(.identifier, undefined));
-        parser.consume(Token.new(.symbol, .{ .symbol = .DoubleColon }));
+        parser.consume(Token.IDEN);
+        parser.consume(Token.DOUBLECOLON);
 
         const kind = parser.current;
 
-        parser.consume(Token.new(.identifier, undefined));
+        parser.consume(Token.IDEN);
 
-        parser.instructions.push(.Parameter);
-        parser.ranges.extend(&.{ param.value.identifier, kind.value.identifier });
+        parser.checker.push_range(param.value.identifier);
+        parser.checker.push_range(kind.value.identifier);
+        parser.checker.push_instruction(.Parameter, &parser.scanner.words);
     }
 
-    parser.consume(Token.new(.symbol, .{ .symbol = .DoubleColon }));
+    parser.consume(Token.DOUBLECOLON);
 
     const ret_iden = parser.current;
 
-    parser.consume(Token.new(.identifier, undefined));
-    parser.consume(Token.new(.symbol, .{ .symbol = .BraceLeft }));
+    parser.consume(Token.IDEN);
+    parser.consume(Token.BRACELEFT);
 
-    while (!parser.match(Token.new(.symbol, .{ .symbol = .BraceRight }))) {
+    while (!parser.match(Token.BRACERIGHT)) {
         statement(parser);
     }
 
-    parser.instructions.push(.Procedure);
-    parser.ranges.extend(&.{ iden.value.identifier, ret_iden.value.identifier });
+    parser.checker.push_range(iden.value.identifier);
+    parser.checker.push_range(ret_iden.value.identifier);
+    parser.checker.push_instruction(.Procedure, &parser.scanner.words);
+
+    parser.generator.write_procedure(
+        iden.value.identifier,
+        parser.checker.procedures.last(),
+        parser.checker.types.content(),
+        null,
+        &parser.scanner.words,
+    );
 }
+// self: *Generator,
+// name_range: Range,
+// procedure: Procedure,
+// types: []const Range,
+// constant: ?Constant,
+// words: *const Vec(u8),
 
 fn statement(parser: *Parser) void {
     const token = parser.current;
@@ -332,37 +322,43 @@ fn statement(parser: *Parser) void {
 }
 
 fn call(parser: *Parser) void {
-    while (!parser.match(Token.new(.symbol, .{ .symbol = .ParentesisRight }))) {
-        _ = parser.match(Token.new(.symbol, .{ .symbol = .Comma }));
+    while (!parser.match(Token.PARENTESISRIGHT)) {
+        _ = parser.match(Token.COMMA);
 
         expression(parser);
     }
-
-    parser.instructions.push(.Call);
 }
 
 fn variable(parser: *Parser) void {
-    const mut = parser.match(Token.new(.keyword, .{ .keyword = .Mut }));
+    const mut = parser.match(Token.MUT);
     const iden = parser.current;
 
-    parser.consume(Token.new(.identifier, undefined));
-    parser.consume(Token.new(.symbol, .{ .symbol = .DoubleColon }));
+    parser.consume(Token.IDEN);
+    parser.consume(Token.DOUBLECOLON);
 
     const kind = parser.current;
 
-    parser.consume(Token.new(.identifier, undefined));
-    parser.consume(Token.new(.symbol, .{ .symbol = .Equal }));
+    parser.consume(Token.IDEN);
+    parser.consume(Token.EQUAL);
 
     expression(parser);
 
-    parser.consume(Token.new(.symbol, .{ .symbol = .Semicolon }));
-    parser.instructions.push(.Let);
+    parser.consume(Token.SEMICOLON);
 
-    if (mut) {
-        parser.instructions.push(.Mut);
-    }
+    if (mut) {}
 
-    parser.ranges.extend(&.{ iden.value.identifier, kind.value.identifier });
+    parser.checker.push_range(iden.value.identifier);
+    parser.checker.push_range(kind.value.identifier);
+    parser.checker.push_instruction(.Let, &parser.scanner.words);
+
+    util.print("writing let\n", .{});
+
+    parser.generator.write_let(
+        parser.scanner.words.range(iden.value.identifier),
+        parser.scanner.words.range(kind.value.identifier),
+        &parser.checker.constants.pop(),
+        &parser.scanner.words,
+    );
 }
 
 fn typ(parser: *Parser) void {
@@ -373,23 +369,23 @@ fn string(parser: *Parser) void {
     _ = parser;
 }
 
-test "Parsing one function" {
-    var arena = Arena.new(allocator.malloc(2));
-    defer arena.deinit();
+// test "Parsing one function" {
+//     var arena = Arena.new(allocator.malloc(2));
+//     defer arena.deinit();
 
-    var parser = Parser.new("zig-out/function.lang", &arena);
-    defer parser.deinit();
+//     var parser = Parser.new("zig-out/function.lang", &arena);
+//     defer parser.deinit();
 
-    try util.assert(parser.next());
+//     try util.assert(parser.next());
 
-    var array = [_]Instruction{
-        .Parameter, .Parameter, .Constant, .Constant, .Constant,  .Add,
-        .Constant,  .Add,       .Multiply, .Let,      .Mut,       .Constant,
-        .Constant,  .Add,       .Let,      .Constant, .Procedure,
-    };
+//     var array = [_]Instruction{
+//         .Parameter, .Parameter, .Constant, .Constant, .Constant,  .Add,
+//         .Constant,  .Add,       .Multiply, .Let,      .Mut,       .Constant,
+//         .Constant,  .Add,       .Let,      .Constant, .Procedure,
+//     };
 
-    const expect = Vec(Instruction).from_array(&array);
+//     const expect = Vec(Instruction).from_array(&array);
 
-    try util.assert(expect.eql(parser.instructions));
-    try util.assert(!parser.next());
-}
+//     try util.assert(expect.eql(parser.instructions));
+//     try util.assert(!parser.next());
+// }
