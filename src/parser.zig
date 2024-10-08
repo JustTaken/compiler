@@ -1,15 +1,17 @@
-const util = @import("util.zig");
-const allocator = @import("allocator.zig");
+const util = @import("util/mod.zig");
+const allocator = @import("allocator/mod.zig");
+const checker = @import("checker.zig");
+const collections = @import("collections/mod.zig");
 
 const Arena = allocator.Arena;
 const Range = util.Range;
-const Vec = @import("collections.zig").Vec;
-const Constant = @import("value.zig").Constant;
+const Vec = collections.Vec;
+const Constant = checker.Constant;
+const TypeChecker = checker.TypeChecker;
+const Instruction = checker.Instruction;
 const Scanner = @import("scanner.zig").Scanner;
 const Token = @import("scanner.zig").Token;
 const Generator = @import("generator.zig").Generator;
-const TypeChecker = @import("checker.zig").TypeChecker;
-const Instruction = @import("checker.zig").Instruction;
 
 const Precedence = enum(u8) {
     None,
@@ -54,7 +56,11 @@ const Rule = struct {
                     .Slash, .Star => return new(null, binary, .Factor),
                     .EqualEqual, .BangEqual => return new(null, binary, .Factor),
                     .Bang => return new(null, binary, .Equality),
-                    .Greater, .GreaterEqual, .Less, .LessEqual => return new(null, binary, .Comparison),
+                    .Greater, .GreaterEqual, .Less, .LessEqual => return new(
+                        null,
+                        binary,
+                        .Comparison,
+                    ),
                 }
             },
             .keyword => {
@@ -79,6 +85,7 @@ pub const Parser = struct {
     scanner: Scanner,
     generator: Generator,
     checker: TypeChecker,
+    has_error: bool,
     error_buffer: Vec(u8),
 
     pub fn new(input: []const u8, output: []const u8, arena: *Arena) Parser {
@@ -91,6 +98,7 @@ pub const Parser = struct {
             .generator = Generator.new(output, arena),
             .checker = TypeChecker.new(arena),
             .error_buffer = Vec(u8).new(512, arena),
+            .has_error = false,
         };
     }
 
@@ -103,11 +111,13 @@ pub const Parser = struct {
         if (self.current.eql(token)) {
             self.advance();
         } else {
-            self.error_buffer.extend("Expected token \"");
-            self.error_buffer.extend(token.to_string());
-            self.error_buffer.extend("\", found \"");
-            self.error_buffer.extend(self.current.to_string());
-            self.error_buffer.extend("\"\n");
+            self.error_buffer.mult_extend(&.{
+                "Expected \"",
+                token.to_string(),
+                "\", found \"",
+                self.current.to_string(),
+                "\"\n",
+            });
         }
     }
 
@@ -126,12 +136,7 @@ pub const Parser = struct {
 
         if (Rule.from_token(self.previous).prefix) |f| {
             f(self);
-        }
-        {
-            self.error_buffer.extend("token \"");
-            self.error_buffer.extend(self.previous.to_string());
-            self.error_buffer.extend("\" do not have prefix function\n");
-        }
+        } else return;
 
         var rule = Rule.from_token(self.current);
         while (@intFromEnum(precedence) <= @intFromEnum(rule.precedence)) {
@@ -142,6 +147,14 @@ pub const Parser = struct {
 
             rule = Rule.from_token(self.current);
         }
+    }
+
+    fn show_error(self: *Parser) void {
+        if (self.error_buffer.len > 0) {
+            util.print("{s}", .{self.error_buffer.offset(0)});
+            self.error_buffer.clear();
+        }
+        self.has_error = true;
     }
 
     pub fn next(self: *Parser) bool {
@@ -175,9 +188,11 @@ fn unary(parser: *Parser) void {
         .Bang => parser.checker.push_instruction(.Not, &parser.scanner.words),
         .Dash => parser.checker.push_instruction(.Negate, &parser.scanner.words),
         else => {
-            parser.error_buffer.extend("operator \"");
-            parser.error_buffer.extend(operator.to_string());
-            parser.error_buffer.extend("\", cannot be unary\n");
+            parser.error_buffer.mult_extend(&.{
+                "operator \"",
+                operator.to_string(),
+                "\" cannot be interpreted as unary\n",
+            });
         },
     }
 }
@@ -209,9 +224,11 @@ fn binary(parser: *Parser) void {
         .Star => parser.checker.push_instruction(.Multiply, &parser.scanner.words),
         .Slash => parser.checker.push_instruction(.Divide, &parser.scanner.words),
         else => {
-            parser.error_buffer.extend("operator \"");
-            parser.error_buffer.extend(operator.to_string());
-            parser.error_buffer.extend("\", cannot be binary\n");
+            parser.error_buffer.mult_extend(&.{
+                "operator \"",
+                operator.to_string(),
+                "\", cannot be binary\n",
+            });
         },
     }
 }
@@ -223,9 +240,11 @@ fn literal(parser: *Parser) void {
         .False => parser.checker.push_boolean(false),
         .True => parser.checker.push_boolean(true),
         else => {
-            parser.error_buffer.extend("keyword \"");
-            parser.error_buffer.extend(keyword.to_string());
-            parser.error_buffer.extend("\", cannot be value\n");
+            parser.error_buffer.mult_extend(&.{
+                "keyword \"",
+                keyword.to_string(),
+                "\", cannot be value\n",
+            });
         },
     }
 }
@@ -238,7 +257,7 @@ fn identifier(parser: *Parser) void {
         parser.checker.push_range(range);
         parser.checker.push_instruction(.Call, &parser.scanner.words);
     } else {
-        parser.checker.push_identifier(range);
+        parser.checker.push_identifier(range, &parser.scanner.words);
     }
 }
 
@@ -248,6 +267,8 @@ fn number(parser: *Parser) void {
 
 fn procedure(parser: *Parser) void {
     const iden = parser.current;
+
+    parser.checker.push_scope();
 
     parser.consume(Token.IDEN);
     parser.consume(Token.PARENTESISLEFT);
@@ -284,20 +305,27 @@ fn procedure(parser: *Parser) void {
     parser.checker.push_range(ret_iden.value.identifier);
     parser.checker.push_instruction(.Procedure, &parser.scanner.words);
 
-    parser.generator.write_procedure(
-        iden.value.identifier,
-        parser.checker.procedures.last(),
-        parser.checker.types.content(),
-        null,
-        &parser.scanner.words,
-    );
+    if (parser.error_buffer.len == 0 and !parser.has_error) {
+        const last_constant: ?Constant = if (parser.checker.constants.len > 0)
+            parser.checker.constants.pop()
+        else
+            null;
+
+        parser.generator.write_procedure(
+            iden.value.identifier,
+            parser.checker.procedures.last(),
+            parser.checker.types.content(),
+            last_constant,
+            &parser.scanner.words,
+        );
+    } else {
+        parser.show_error();
+    }
+
+    parser.checker.pop_scope();
+    parser.checker.clear();
+    parser.generator.clear();
 }
-// self: *Generator,
-// name_range: Range,
-// procedure: Procedure,
-// types: []const Range,
-// constant: ?Constant,
-// words: *const Vec(u8),
 
 fn statement(parser: *Parser) void {
     const token = parser.current;
@@ -310,10 +338,13 @@ fn statement(parser: *Parser) void {
                 .Let => variable(parser),
                 .Procedure => procedure(parser),
                 .Type => typ(parser),
+                .Match => case(parser),
                 else => {
-                    parser.error_buffer.extend("keyword \"");
-                    parser.error_buffer.extend(token.value.keyword.to_string());
-                    parser.error_buffer.extend("\" cannot be statement predecesor\n");
+                    parser.error_buffer.mult_extend(&.{
+                        "keyword \"",
+                        token.value.keyword.to_string(),
+                        "\" cannot be statement predecesor\n",
+                    });
                 },
             }
         },
@@ -351,14 +382,65 @@ fn variable(parser: *Parser) void {
     parser.checker.push_range(kind.value.identifier);
     parser.checker.push_instruction(.Let, &parser.scanner.words);
 
-    util.print("writing let\n", .{});
+    if (parser.error_buffer.len == 0 and !parser.has_error) {
+        const last_constant = parser.checker.constants.pop();
 
-    parser.generator.write_let(
-        parser.scanner.words.range(iden.value.identifier),
-        parser.scanner.words.range(kind.value.identifier),
-        &parser.checker.constants.pop(),
-        &parser.scanner.words,
-    );
+        if (!last_constant.is_raw()) {
+            parser.generator.write_let(
+                parser.scanner.words.range(iden.value.identifier),
+                parser.scanner.words.range(kind.value.identifier),
+                parser.checker.types.offset(0),
+                &last_constant,
+                &parser.scanner.words,
+            );
+        }
+    } else {
+        parser.show_error();
+    }
+}
+
+const CaseMatch = enum {
+    Boolean,
+    Identifier,
+    Number,
+};
+
+fn case(parser: *Parser) void {
+    expression(parser);
+    parser.consume(Token.BRACELEFT);
+
+    while (!parser.match(Token.BRACERIGHT)) {
+        parser.checker.push_scope();
+        parser.consume(Token.OF);
+
+        const iden = parser.current;
+
+        const match_on: CaseMatch = switch (iden.kind) {
+            .keyword => .Boolean,
+            .identifier => .Identifier,
+            .number => .Number,
+            else => unreachable,
+        };
+
+        parser.advance();
+        parser.consume(Token.ARROW);
+
+        expression(parser);
+
+        parser.consume(Token.COMMA);
+
+        switch (match_on) {
+            .Boolean => parser.checker.push_boolean(iden.eql(Token.TRUE)),
+            .Number => parser.checker.push_number(iden.value.number),
+            .Identifier => parser.checker.push_identifier(
+                iden.value.identifier,
+                &parser.scanner.words,
+            ),
+        }
+
+        parser.checker.push_instruction(.Case, &parser.scanner.words);
+        parser.checker.pop_scope();
+    }
 }
 
 fn typ(parser: *Parser) void {
@@ -368,24 +450,3 @@ fn typ(parser: *Parser) void {
 fn string(parser: *Parser) void {
     _ = parser;
 }
-
-// test "Parsing one function" {
-//     var arena = Arena.new(allocator.malloc(2));
-//     defer arena.deinit();
-
-//     var parser = Parser.new("zig-out/function.lang", &arena);
-//     defer parser.deinit();
-
-//     try util.assert(parser.next());
-
-//     var array = [_]Instruction{
-//         .Parameter, .Parameter, .Constant, .Constant, .Constant,  .Add,
-//         .Constant,  .Add,       .Multiply, .Let,      .Mut,       .Constant,
-//         .Constant,  .Add,       .Let,      .Constant, .Procedure,
-//     };
-
-//     const expect = Vec(Instruction).from_array(&array);
-
-//     try util.assert(expect.eql(parser.instructions));
-//     try util.assert(!parser.next());
-// }

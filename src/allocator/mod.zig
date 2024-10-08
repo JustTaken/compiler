@@ -1,5 +1,4 @@
 const std = @import("std");
-const util = @import("util.zig");
 
 pub fn malloc(pages: usize) []u8 {
     const buffer = std.posix.mmap(
@@ -70,10 +69,13 @@ pub const Arena = struct {
         return @ptrCast(ptr);
     }
 
+    pub fn clear(self: *Arena) void {
+        self.used = 0;
+    }
+
     pub fn deinit(self: *Arena) void {
         const ptr: [*]const u8 = @ptrCast(self.ptr);
         free(ptr[0..self.capacity]);
-        util.print("Arena usage: {}\n", .{self.used});
         self.used = 0;
     }
 };

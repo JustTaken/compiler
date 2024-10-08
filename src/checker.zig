@@ -1,6 +1,6 @@
-const collections = @import("collections.zig");
-const allocator = @import("allocator.zig");
-const util = @import("util.zig");
+const collections = @import("collections/mod.zig");
+const allocator = @import("allocator/mod.zig");
+const util = @import("util/mod.zig");
 
 const Arena = allocator.Arena;
 const Vec = collections.Vec;
@@ -26,44 +26,23 @@ pub const Instruction = enum(u8) {
     Procedure,
     Argument,
     Parameter,
+    Case,
     Ret,
     Call,
 };
 
-// pub const TempValueBuilder = struct {
-//     buffer: Vec(u8),
-//     next: u32,
-
-//     pub fn new(arena: *Arena) TempValueBuilder {
-//         return TempValueBuilder{
-//             .buffer = Vec(u8).new(1024, arena),
-//             .next = 0,
-//         };
-//     }
-
-//     pub fn get(self: *TempValueBuilder) []const u8 {
-//         const start = self.buffer.len;
-//         self.buffer.extend("%temp");
-//         util.parse(@intCast(self.next), &self.buffer);
-//         self.inc();
-
-//         return self.buffer.content()[start..];
-//     }
-
-//     pub fn reset(self: *TempValueBuilder) void {
-//         self.next = 0;
-//     }
-
-//     pub fn inc(self: *TempValueBuilder) void {
-//         self.next += 1;
-//     }
-// };
+fn is_type(index: Index) bool {
+    return index != 0;
+}
 
 const BinaryOperator = enum(u8) {
     Add,
     Sub,
     Mul,
     Div,
+    Gt,
+    Lt,
+    Eq,
 
     fn from_instruction(instruction: Instruction) BinaryOperator {
         return switch (instruction) {
@@ -71,16 +50,22 @@ const BinaryOperator = enum(u8) {
             .Subtract => .Sub,
             .Multiply => .Mul,
             .Divide => .Div,
-            else => @panic("should not happen"),
+            .Greater => .Gt,
+            .Less => .Lt,
+            .Equal => .Eq,
+            else => unreachable,
         };
     }
 
     pub fn to_string(self: BinaryOperator) []const u8 {
         return switch (self) {
-            .Add => "sum",
+            .Add => "add",
             .Sub => "sub",
             .Mul => "mul",
             .Div => "div",
+            .Gt => "gt",
+            .Lt => "lt",
+            .Eq => "eq",
         };
     }
 };
@@ -93,21 +78,19 @@ const ConstantBinary = struct {
     fn set_type(self: *const ConstantBinary, index: Index) bool {
         return self.left.set_type(index) and self.right.set_type(index);
     }
-
-    fn get_type(self: *const ConstantBinary) Index {
-        return self.left.get_type();
-    }
 };
 
 const ConstantRawKind = enum(u8) {
     number,
     identifier,
+    parameter,
     boolean,
 };
 
 const ConstantRawValue = union(ConstantRawKind) {
     number: Range,
     identifier: Range,
+    parameter: Index,
     boolean: bool,
 };
 
@@ -118,42 +101,57 @@ const ConstantRaw = struct {
     pub fn range(self: *const ConstantRaw) Range {
         switch (self.value) {
             .identifier, .number => |r| return r,
-            else => @panic("Should not happen"),
+            else => unreachable,
         }
     }
 
-    pub fn is_identifier(self: *const ConstantRaw) bool {
+    pub fn has_prefix(self: *const ConstantRaw) bool {
         return switch (self.value) {
-            .identifier => true,
-            else => false,
+            .number => false,
+            else => true,
+        };
+    }
+
+    pub fn content(self: *const ConstantRaw, words: *Vec(u8)) []const u8 {
+        return switch (self.value) {
+            .boolean => @panic("TODO"),
+            .number, .identifier => |r| return words.range(r),
+            .parameter => |p| {
+                const start = words.len;
+                util.parse(p, words);
+
+                return words.offset(start);
+            },
         };
     }
 };
 
-const ConstKind = enum(u8) { raw, binary };
+const ConstantCall = struct {
+    arguments: [*]Constant,
+    len: Index,
+    index: Index,
+    range: Range,
+};
+
+const ConstKind = enum(u8) { raw, binary, call };
 pub const Constant = union(ConstKind) {
     raw: ConstantRaw,
     binary: ConstantBinary,
+    call: ConstantCall,
 
     pub fn is_raw(self: Constant) bool {
         return switch (self) {
             .raw => true,
-            .binary => false,
-        };
-    }
-
-    fn is_variable(self: Constant) bool {
-        return switch (self) {
-            .raw => |r| r.is_identifier(),
-            .binary => false,
+            else => false,
         };
     }
 
     fn set_type(self: *Constant, index: Index) bool {
         switch (self.*) {
             .binary => |b| return b.set_type(index),
+            .call => |c| return c.index == index,
             .raw => |*r| {
-                if (r.index != 0) {
+                if (is_type(r.index)) {
                     return r.index == index;
                 } else {
                     r.index = index;
@@ -163,63 +161,152 @@ pub const Constant = union(ConstKind) {
         }
     }
 
-    fn range(self: Constant) Range {
+    pub fn get_type(self: Constant) Index {
+        return switch (self) {
+            .binary => |b| b.left.get_type(),
+            .call => |c| c.index,
+            .raw => |r| r.index,
+        };
+    }
+
+    pub fn range(self: Constant) Range {
         return switch (self) {
             .raw => |r| r.range(),
-            .binary => @panic("Should not happen"),
+            else => unreachable,
         };
     }
 };
 
+const Parameter = struct {
+    pos: Index,
+    index: Index,
+};
+
+const VariableKind = enum(u8) { raw, parameter, alias };
+const Variable = union(VariableKind) {
+    raw: Index,
+    parameter: Parameter,
+    alias: ConstantRaw,
+};
+
 pub const Procedure = struct {
-    parameters: []const Index,
-    return_type: Index,
+    parameters: [*]Index,
+    len: Index,
+    index: Index,
+};
+
+const Scope = struct {
+    variable_count: Index,
+    variable_offset: Index,
 };
 
 pub const TypeChecker = struct {
     ranges: Vec(Range),
     constants: Vec(Constant),
     parameters: Vec(Index),
+    scopes: Vec(Scope),
     types: Vec(Range),
     type_indices: RangeMap(Index),
     procedures: Vec(Procedure),
     procedure_indices: RangeMap(Index),
-    variables: RangeMap(Index),
+    variables: RangeMap(Variable),
+    variable_indices: Vec(Index),
     arena: Arena,
-    error_content_buffer: Vec(u8),
-    last_parameter_offset: Index,
+    error_buffer: Vec(u8),
 
     pub fn new(arena: *Arena) TypeChecker {
         return TypeChecker{
             .ranges = Vec(Range).new(2, arena),
-            .constants = Vec(Constant).new(4, arena),
+            .constants = Vec(Constant).new(10, arena),
             .parameters = Vec(Index).new(10, arena),
+            .scopes = Vec(Scope).new(10, arena),
             .types = Vec(Range).new(64, arena),
             .type_indices = RangeMap(Index).new(64, arena),
             .procedure_indices = RangeMap(Index).new(64, arena),
             .procedures = Vec(Procedure).new(64, arena),
-            .variables = RangeMap(Index).new(64, arena),
+            .variables = RangeMap(Variable).new(64, arena),
+            .variable_indices = Vec(Index).new(64, arena),
             .arena = Arena.new(arena.bytes(1024)),
-            .error_content_buffer = Vec(u8).new(512, arena),
-            .last_parameter_offset = 0,
+            .error_buffer = Vec(u8).new(512, arena),
         };
+    }
+
+    pub fn clear(self: *TypeChecker) void {
+        self.error_buffer.clear();
+        self.constants.clear();
+        self.variables.clear();
+        self.arena.clear();
     }
 
     pub fn push_range(self: *TypeChecker, range: Range) void {
         self.ranges.push(range);
     }
 
-    pub fn push_identifier(self: *TypeChecker, range: Range) void {
-        self.constants.push(
-            Constant{
+    pub fn push_scope(self: *TypeChecker) void {
+        self.scopes.push(Scope{
+            .variable_offset = @intCast(self.variable_indices.len),
+            .variable_count = 0,
+        });
+    }
+
+    pub fn pop_scope(self: *TypeChecker) void {
+        const scope = self.scopes.pop();
+
+        for (0..scope.variable_count) |i| {
+            const variable_pos = self.variable_indices.items[scope.variable_offset + i];
+            self.variables.key[variable_pos] = Range.new(0, 0);
+        }
+
+        self.variable_indices.len -= scope.variable_count;
+    }
+
+    pub fn push_identifier(
+        self: *TypeChecker,
+        range: Range,
+        words: *const Vec(u8),
+    ) void {
+        var constant: Constant = undefined;
+
+        if (self.variables.get(range, words)) |variable| {
+            switch (variable.*) {
+                .raw => |i| {
+                    constant = Constant{
+                        .raw = ConstantRaw{
+                            .value = ConstantRawValue{
+                                .identifier = range,
+                            },
+                            .index = i,
+                        },
+                    };
+                },
+                .parameter => |p| {
+                    constant = Constant{
+                        .raw = ConstantRaw{
+                            .value = ConstantRawValue{
+                                .parameter = p.pos,
+                            },
+                            .index = p.index,
+                        },
+                    };
+                },
+                .alias => |c| {
+                    constant = Constant{
+                        .raw = c,
+                    };
+                },
+            }
+        } else {
+            constant = Constant{
                 .raw = ConstantRaw{
                     .value = ConstantRawValue{
                         .identifier = range,
                     },
                     .index = 0,
                 },
-            },
-        );
+            };
+        }
+
+        self.constants.push(constant);
     }
 
     pub fn push_boolean(self: *TypeChecker, value: bool) void {
@@ -257,9 +344,11 @@ pub const TypeChecker = struct {
             .Parameter => self.register_parameter(words),
             .Let => self.register_let(words),
             .Procedure => self.register_procedure(words),
-            .Add, .Multiply, .Divide, .Subtract => {
+            .Call => self.register_call(words),
+            .Case => self.register_case(words),
+            .Add, .Multiply, .Divide, .Subtract, .Greater, .Less, .Equal, => {
                 const op = BinaryOperator.from_instruction(instruction);
-                self.register_binary(op, words);
+                self.register_binary(op);
             },
             else => {},
         }
@@ -281,25 +370,17 @@ pub const TypeChecker = struct {
     fn register_binary(
         self: *TypeChecker,
         op: BinaryOperator,
-        words: *const Vec(u8),
     ) void {
-        var first = self.constants.pop();
         var second = self.constants.pop();
+        var first = self.constants.pop();
 
-        if (first.is_variable()) {
-            if (self.variables.get(first.range(), words)) |i| {
-                if (!second.set_type(i.*) and !first.set_type(i.*)) {
-                    @panic("Could not set varaible type");
-                }
-            }
-        }
+        const first_type = first.get_type();
+        const second_type = second.get_type();
 
-        if (second.is_variable()) {
-            if (self.variables.get(second.range(), words)) |i| {
-                if (!second.set_type(i.*) and !first.set_type(i.*)) {
-                    @panic("Could not set varaible type");
-                }
-            }
+        if (is_type(first_type)) {
+            _ = second.set_type(first_type);
+        } else if (is_type(second_type)) {
+            _ = first.set_type(second_type);
         }
 
         self.constants.push(
@@ -317,10 +398,67 @@ pub const TypeChecker = struct {
         const index = self.get_type(type_range, words);
 
         if (!self.constants.last().set_type(index)) {
-            @panic("Could not set type of let declaration");
+            self.error_buffer.extend("Couldnot set the type of let delcaration");
+            return;
         }
 
-        self.variables.push(name_range, index, words);
+        var variable: Variable = undefined;
+
+        switch (self.constants.last().*) {
+            .raw => |r| variable = Variable{ .alias = r },
+            else => variable = Variable{
+                .raw = index,
+            },
+        }
+
+        const position = self.variables.put(
+            name_range,
+            variable,
+            words,
+        );
+
+        self.variable_indices.push(@intCast(position));
+        self.scopes.last().variable_count += 1;
+    }
+
+    fn register_call(self: *TypeChecker, words: *const Vec(u8)) void {
+        const name_range = self.ranges.pop();
+        var procedure: Procedure = undefined;
+
+        if (self.procedure_indices.get(name_range, words)) |index| {
+            procedure = self.procedures.value(index.*);
+        } else {
+            self.error_buffer.extend("Could not find function declaration");
+        }
+
+        var call = ConstantCall{
+            .arguments = self.arena.alloc(Constant, procedure.len),
+            .index = procedure.index,
+            .len = procedure.len,
+            .range = name_range,
+        };
+
+        for (0..procedure.len) |i| {
+            var constant = self.constants.pop();
+            const parameter = procedure.parameters[procedure.len - i - 1];
+
+            if (!constant.set_type(parameter)) {
+                self.error_buffer.extend("Type mismatch inside procedure call");
+            }
+
+            call.arguments[procedure.len - i - 1] = constant;
+        }
+
+        self.constants.push(Constant{
+            .call = call,
+        });
+    }
+
+    fn register_case(self: *TypeChecker, words: *const Vec(u8)) void {
+        _ = words;
+        _ = self.constants.pop(); // This is the case expression
+        _ = self.constants.pop(); // This is the case to match
+        _ = self.constants.pop(); // This is the match expression
     }
 
     fn register_procedure(self: *TypeChecker, words: *const Vec(u8)) void {
@@ -330,19 +468,26 @@ pub const TypeChecker = struct {
 
         if (self.constants.len > 0) {
             if (!self.constants.last().set_type(index)) {
-                @panic("Could not set type of let declaration");
+                self.error_buffer.extend("Could not set type of let declaration");
             }
         }
 
         const len: Index = @intCast(self.procedures.len);
+        const parameters_len: Index = @intCast(self.parameters.len);
+
+        var procedure = Procedure{
+            .parameters = self.arena.alloc(Index, parameters_len),
+            .len = parameters_len,
+            .index = index,
+        };
+
+        for (0..parameters_len) |i| {
+            const parameter = self.parameters.pop();
+            procedure.parameters[parameters_len - i - 1] = parameter;
+        }
 
         self.procedure_indices.push(name_range, len, words);
-        self.procedures.push(Procedure {
-            .parameters = self.parameters.offset(self.last_parameter_offset),
-            .return_type = index,
-        });
-
-        self.last_parameter_offset = @intCast(self.parameters.len);
+        self.procedures.push(procedure);
     }
 
     fn register_parameter(self: *TypeChecker, words: *const Vec(u8)) void {
@@ -350,7 +495,19 @@ pub const TypeChecker = struct {
         const name_range = self.ranges.pop();
         const index = self.get_type(type_range, words);
 
+        self.variables.push(
+            name_range,
+            Variable{
+                .alias = ConstantRaw{
+                    .value = .{
+                        .parameter = @intCast(self.parameters.len),
+                    },
+                    .index = index,
+                },
+            },
+            words,
+        );
+
         self.parameters.push(index);
-        self.variables.push(name_range, index, words);
     }
 };

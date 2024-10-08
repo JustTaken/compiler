@@ -1,5 +1,5 @@
 const std = @import("std");
-const Vec = @import("collections.zig").Vec;
+const Vec = @import("../collections/mod.zig").Vec;
 
 pub const Index = u16;
 pub const Range = struct {

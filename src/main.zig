@@ -1,12 +1,10 @@
 const std = @import("std");
-const allocator = @import("allocator.zig");
-const util = @import("util.zig");
+const allocator = @import("allocator/mod.zig");
 
 const Arena = allocator.Arena;
 const Parser = @import("parser.zig").Parser;
 
 pub fn main() void {
-    // const start = try std.time.Instant.now();
     var arena = Arena.new(allocator.malloc(3));
     defer arena.deinit();
 

@@ -1,6 +1,6 @@
-const util = @import("util.zig");
+const util = @import("../util/mod.zig");
 
-const Arena = @import("allocator.zig").Arena;
+const Arena = @import("../allocator/mod.zig").Arena;
 const Range = util.Range;
 
 pub fn Vec(T: type) type {
@@ -16,14 +16,6 @@ pub fn Vec(T: type) type {
                 .items = arena.alloc(T, size),
                 .capacity = size,
                 .len = 0,
-            };
-        }
-
-        pub fn from_array(items: []T) Self {
-            return Self{
-                .items = items.ptr,
-                .len = @intCast(items.len),
-                .capacity = @intCast(items.len),
             };
         }
 
@@ -74,6 +66,10 @@ pub fn Vec(T: type) type {
             return &self.items[index];
         }
 
+        pub fn value(self: *const Self, index: u32) T {
+            return self.items[index];
+        }
+
         pub fn last(self: *const Self) *T {
             if (self.len == 0) @panic("Vec len is zero");
 
@@ -102,8 +98,8 @@ pub fn Vec(T: type) type {
             return self.items[r.start..r.end];
         }
 
-        pub fn offset(self: *const Self, index: u32) []const T {
-            return self.range(Range.new(index, self.len));
+        pub fn offset(self: *const Self, o: u32) []const T {
+            return self.range(Range.new(o, self.len));
         }
 
         pub fn content(self: *const Self) []const T {
@@ -138,6 +134,10 @@ pub fn RangeMap(T: type) type {
         }
 
         pub fn push(self: *Self, key: Range, item: T, buffer: *const Vec(u8)) void {
+            _ = self.put(key, item, buffer);
+        }
+
+        pub fn put(self: *Self, key: Range, item: T, buffer: *const Vec(u8)) u32 {
             const h = util.hash(buffer.range(key));
 
             var code = h % self.capacity;
@@ -156,6 +156,8 @@ pub fn RangeMap(T: type) type {
 
             self.value[code] = item;
             self.key[code] = key;
+
+            return code;
         }
 
         pub fn get(self: *const Self, key: Range, buffer: *const Vec(u8)) ?*T {
@@ -178,38 +180,6 @@ pub fn RangeMap(T: type) type {
 
         pub fn clear(self: *Self) void {
             @memset(self.key[0..self.capacity], Range.new(0, 0));
-        }
-    };
-}
-
-pub fn Iter(T: type) type {
-    return struct {
-        vec: *const Vec(T),
-        index: u32,
-
-        const Self = @This();
-        pub fn new(vec: *const Vec(T)) Self {
-            return Self{
-                .vec = vec,
-                .index = 0,
-            };
-        }
-
-        pub fn next(self: *Self) ?*T {
-            if (self.index >= self.vec.len) {
-                return null;
-            } else {
-                self.index += 1;
-                return self.vec.get(self.index - 1);
-            }
-        }
-
-        pub fn has_next(self: *const Self) bool {
-            return self.index < self.vec.len;
-        }
-
-        pub fn consume(self: *Self) void {
-            self.index += 1;
         }
     };
 }

@@ -1,8 +1,8 @@
 const std = @import("std");
-const util = @import("util.zig");
-const allocator = @import("allocator.zig");
+const util = @import("util/mod.zig");
+const allocator = @import("allocator/mod.zig");
 
-const Vec = @import("collections.zig").Vec;
+const Vec = @import("collections/mod.zig").Vec;
 const Arena = allocator.Arena;
 const Range = util.Range;
 const Index = util.Index;
@@ -16,11 +16,13 @@ pub const Keyword = enum(u8) {
     Type,
     True,
     False,
+    Of,
 
     fn from_string(string: []const u8) ?Keyword {
         switch (string[0]) {
             'p' => if (util.equal(u8, "proc", string)) return Keyword.Procedure,
             'r' => if (util.equal(u8, "return", string)) return Keyword.Return,
+            'o' => if (util.equal(u8, "of", string)) return Keyword.Of,
             't' => if (util.equal(u8, "type", string))
                 return Keyword.Type
             else if (util.equal(u8, "true", string)) return Keyword.True,
@@ -44,6 +46,7 @@ pub const Keyword = enum(u8) {
             .Match => "match",
             .Type => "type",
             .True => "true",
+            .Of => "of",
             .False => "false",
         };
     }
@@ -91,9 +94,11 @@ pub const Symbol = enum(u8) {
     ParentesisRight,
     Semicolon,
     Comma,
+    Arrow,
 
     pub fn to_string(self: Symbol) []const u8 {
         return switch (self) {
+            .Arrow => "arrow",
             .Equal => "equal",
             .Dot => "dot",
             .DoubleColon => "doublecolon",
@@ -140,10 +145,14 @@ pub const Token = struct {
     pub const DOUBLECOLON = Token{ .kind = .symbol, .value = .{ .symbol = .DoubleColon } };
     pub const BRACELEFT = Token{ .kind = .symbol, .value = .{ .symbol = .BraceLeft } };
     pub const BRACERIGHT = Token{ .kind = .symbol, .value = .{ .symbol = .BraceRight } };
-    pub const MUT = Token{ .kind = .keyword, .value = .{ .keyword = .Mut } };
     pub const EQUAL = Token{ .kind = .symbol, .value = .{ .symbol = .Equal } };
-    pub const SEMICOLON = Token{ .kind = .symbol, .value = .{ .symbol = .Semicolon} };
+    pub const ARROW = Token{ .kind = .symbol, .value = .{ .symbol = .Arrow } };
+    pub const SEMICOLON = Token{ .kind = .symbol, .value = .{ .symbol = .Semicolon } };
     pub const EOF = Token{ .kind = .eof, .value = undefined };
+    pub const MUT = Token{ .kind = .keyword, .value = .{ .keyword = .Mut } };
+    pub const OF = Token{ .kind = .keyword, .value = .{ .keyword = .Of } };
+    pub const TRUE = Token{ .kind = .keyword, .value = .{ .keyword = .True } };
+    pub const FALSE = Token{ .kind = .keyword, .value = .{ .keyword = .False } };
 
     pub fn new(kind: TokenKind, value: TokenValue) Token {
         return Token{
@@ -294,10 +303,15 @@ pub const Scanner = struct {
             '*' => Token.new(.operator, .{ .operator = .Star }),
             '/' => Token.new(.operator, .{ .operator = .Slash }),
 
-            '=' => if (self.match('=')) Token.new(.operator, .{ .operator = .EqualEqual }) else Token.new(.symbol, .{ .symbol = .Equal }),
             '!' => if (self.match('=')) Token.new(.operator, .{ .operator = .BangEqual }) else Token.new(.operator, .{ .operator = .Bang }),
             '>' => if (self.match('=')) Token.new(.operator, .{ .operator = .GreaterEqual }) else Token.new(.operator, .{ .operator = .Greater }),
             '<' => if (self.match('=')) Token.new(.operator, .{ .operator = .LessEqual }) else Token.new(.operator, .{ .operator = .Less }),
+            '=' => if (self.match('='))
+                Token.new(.operator, .{ .operator = .EqualEqual })
+            else if (self.match('>'))
+                Token.new(.symbol, .{ .symbol = .Arrow })
+            else
+                Token.new(.symbol, .{ .symbol = .Equal }),
             '"' => blk: {
                 while (!self.at_end() and self.char() != '"') {
                     self.inc();
