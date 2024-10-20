@@ -268,6 +268,7 @@ fn number(parser: *Parser) void {
 fn procedure(parser: *Parser) void {
     const iden = parser.current;
 
+    parser.checker.push_procedure();
     parser.checker.push_scope();
 
     parser.consume(Token.IDEN);
@@ -306,18 +307,18 @@ fn procedure(parser: *Parser) void {
     parser.checker.push_instruction(.Procedure, &parser.scanner.words);
 
     if (parser.error_buffer.len == 0 and !parser.has_error) {
-        const last_constant: ?Constant = if (parser.checker.constants.len > 0)
-            parser.checker.constants.pop()
-        else
-            null;
+        // const last_constant: ?Constant = if (parser.checker.constants.len > 0)
+        //     parser.checker.constants.pop()
+        // else
+        //     null;
 
-        parser.generator.write_procedure(
-            iden.value.identifier,
-            parser.checker.procedures.last(),
-            parser.checker.types.content(),
-            last_constant,
-            &parser.scanner.words,
-        );
+        // parser.generator.write_procedure(
+        //     iden.value.identifier,
+        //     parser.checker.procedures.last(),
+        //     parser.checker.types.content(),
+        //     last_constant,
+        //     &parser.scanner.words,
+        // );
     } else {
         parser.show_error();
     }
@@ -386,13 +387,13 @@ fn variable(parser: *Parser) void {
         const last_constant = parser.checker.constants.pop();
 
         if (!last_constant.is_raw()) {
-            parser.generator.write_let(
-                parser.scanner.words.range(iden.value.identifier),
-                parser.scanner.words.range(kind.value.identifier),
-                parser.checker.types.offset(0),
-                &last_constant,
-                &parser.scanner.words,
-            );
+            // parser.generator.write_let(
+            //     parser.scanner.words.range(iden.value.identifier),
+            //     parser.scanner.words.range(kind.value.identifier),
+            //     parser.checker.types.offset(0),
+            //     &last_constant,
+            //     &parser.scanner.words,
+            // );
         }
     } else {
         parser.show_error();
@@ -415,12 +416,15 @@ fn case(parser: *Parser) void {
 
         const iden = parser.current;
 
-        const match_on: CaseMatch = switch (iden.kind) {
-            .keyword => .Boolean,
-            .identifier => .Identifier,
-            .number => .Number,
-            else => unreachable,
-        };
+        switch (iden.kind) {
+            .keyword => parser.checker.push_boolean(iden.eql(Token.TRUE)),
+            .number => parser.checker.push_number(iden.value.number),
+            .identifier => parser.checker.push_identifier(
+                iden.value.identifier,
+                &parser.scanner.words,
+            ),
+            else => @panic("Should not happen"),
+        }
 
         parser.advance();
         parser.consume(Token.ARROW);
@@ -429,18 +433,16 @@ fn case(parser: *Parser) void {
 
         parser.consume(Token.COMMA);
 
-        switch (match_on) {
-            .Boolean => parser.checker.push_boolean(iden.eql(Token.TRUE)),
-            .Number => parser.checker.push_number(iden.value.number),
-            .Identifier => parser.checker.push_identifier(
-                iden.value.identifier,
-                &parser.scanner.words,
-            ),
-        }
-
         parser.checker.push_instruction(.Case, &parser.scanner.words);
         parser.checker.pop_scope();
     }
+
+    parser.checker.push_instruction(.Match, &parser.scanner.words);
+
+    // parser.generator.write_match(
+    //     &parser.checker.match,
+    //     &parser.scanner.words,
+    // );
 }
 
 fn typ(parser: *Parser) void {

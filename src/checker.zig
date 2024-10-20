@@ -27,6 +27,7 @@ pub const Instruction = enum(u8) {
     Argument,
     Parameter,
     Case,
+    Match,
     Ret,
     Call,
 };
@@ -65,7 +66,7 @@ const BinaryOperator = enum(u8) {
             .Div => "div",
             .Gt => "gt",
             .Lt => "lt",
-            .Eq => "eq",
+            .Eq => "icmp eq",
         };
     }
 };
@@ -190,9 +191,32 @@ const Variable = union(VariableKind) {
 };
 
 pub const Procedure = struct {
-    parameters: [*]Index,
-    len: Index,
+    parameters: Vec(Index),
     index: Index,
+
+    fn new(arena: *Arena) Procedure {
+        return Procedure {
+            .parameters = Vec(Index).new(10, arena),
+            .index = 0,
+        };
+    }
+};
+
+const MatchCase = struct {
+    of: ConstantRaw,
+    expression: Constant,
+};
+
+pub const Match = struct {
+    cases: Vec(MatchCase),
+    expression: Constant,
+
+    fn new(arena: *Arena) Match {
+        return Match {
+            .cases = Vec(MatchCase).new(10, arena),
+            .expression = undefined,
+        };
+    }
 };
 
 const Scope = struct {
@@ -203,7 +227,6 @@ const Scope = struct {
 pub const TypeChecker = struct {
     ranges: Vec(Range),
     constants: Vec(Constant),
-    parameters: Vec(Index),
     scopes: Vec(Scope),
     types: Vec(Range),
     type_indices: RangeMap(Index),
@@ -211,6 +234,7 @@ pub const TypeChecker = struct {
     procedure_indices: RangeMap(Index),
     variables: RangeMap(Variable),
     variable_indices: Vec(Index),
+    match: Match,
     arena: Arena,
     error_buffer: Vec(u8),
 
@@ -218,7 +242,6 @@ pub const TypeChecker = struct {
         return TypeChecker{
             .ranges = Vec(Range).new(2, arena),
             .constants = Vec(Constant).new(10, arena),
-            .parameters = Vec(Index).new(10, arena),
             .scopes = Vec(Scope).new(10, arena),
             .types = Vec(Range).new(64, arena),
             .type_indices = RangeMap(Index).new(64, arena),
@@ -226,6 +249,7 @@ pub const TypeChecker = struct {
             .procedures = Vec(Procedure).new(64, arena),
             .variables = RangeMap(Variable).new(64, arena),
             .variable_indices = Vec(Index).new(64, arena),
+            .match = Match.new(arena),
             .arena = Arena.new(arena.bytes(1024)),
             .error_buffer = Vec(u8).new(512, arena),
         };
@@ -240,6 +264,10 @@ pub const TypeChecker = struct {
 
     pub fn push_range(self: *TypeChecker, range: Range) void {
         self.ranges.push(range);
+    }
+
+    pub fn push_procedure(self: *TypeChecker) void {
+        self.procedures.push(Procedure.new(&self.arena));
     }
 
     pub fn push_scope(self: *TypeChecker) void {
@@ -398,7 +426,7 @@ pub const TypeChecker = struct {
         const index = self.get_type(type_range, words);
 
         if (!self.constants.last().set_type(index)) {
-            self.error_buffer.extend("Couldnot set the type of let delcaration");
+            self.error_buffer.extend("Could not set the type of let delcaration");
             return;
         }
 
@@ -431,22 +459,23 @@ pub const TypeChecker = struct {
             self.error_buffer.extend("Could not find function declaration");
         }
 
+        const argument_len: Index = @intCast(procedure.parameters.len);
         var call = ConstantCall{
-            .arguments = self.arena.alloc(Constant, procedure.len),
+            .arguments = self.arena.alloc(Constant, argument_len),
             .index = procedure.index,
-            .len = procedure.len,
+            .len = argument_len,
             .range = name_range,
         };
 
-        for (0..procedure.len) |i| {
+        for (0..argument_len) |i| {
             var constant = self.constants.pop();
-            const parameter = procedure.parameters[procedure.len - i - 1];
+            const parameter = procedure.parameters.items[argument_len - i - 1];
 
             if (!constant.set_type(parameter)) {
                 self.error_buffer.extend("Type mismatch inside procedure call");
             }
 
-            call.arguments[procedure.len - i - 1] = constant;
+            call.arguments[argument_len - i - 1] = constant;
         }
 
         self.constants.push(Constant{
@@ -455,10 +484,32 @@ pub const TypeChecker = struct {
     }
 
     fn register_case(self: *TypeChecker, words: *const Vec(u8)) void {
+        self.match.cases.push(
+            MatchCase{
+                .expression = self.constants.pop(),
+                .of = self.constants.pop().raw,
+            },
+            
+        );
         _ = words;
-        _ = self.constants.pop(); // This is the case expression
-        _ = self.constants.pop(); // This is the case to match
-        _ = self.constants.pop(); // This is the match expression
+    }
+
+    fn register_match(self: *TypeChecker, words: *const Vec(u8)) void {
+        _ = words;
+        var constant = self.constants.pop();
+        var t = constant.get_type();
+
+        if (!is_type(t)) {
+            t = 1;
+        }
+
+        constant.set_type(t);
+
+        self.match.expression = constant;
+
+        for (self.match.cases.offset(0)) |*case| {
+            case.of.index = t;
+        }
     }
 
     fn register_procedure(self: *TypeChecker, words: *const Vec(u8)) void {
@@ -472,22 +523,8 @@ pub const TypeChecker = struct {
             }
         }
 
-        const len: Index = @intCast(self.procedures.len);
-        const parameters_len: Index = @intCast(self.parameters.len);
-
-        var procedure = Procedure{
-            .parameters = self.arena.alloc(Index, parameters_len),
-            .len = parameters_len,
-            .index = index,
-        };
-
-        for (0..parameters_len) |i| {
-            const parameter = self.parameters.pop();
-            procedure.parameters[parameters_len - i - 1] = parameter;
-        }
-
-        self.procedure_indices.push(name_range, len, words);
-        self.procedures.push(procedure);
+        self.procedures.last().index = index;
+        self.procedure_indices.push(name_range, @intCast(self.procedures.len - 1), words);
     }
 
     fn register_parameter(self: *TypeChecker, words: *const Vec(u8)) void {
@@ -500,7 +537,7 @@ pub const TypeChecker = struct {
             Variable{
                 .alias = ConstantRaw{
                     .value = .{
-                        .parameter = @intCast(self.parameters.len),
+                        .parameter = @intCast(self.procedures.last().parameters.len),
                     },
                     .index = index,
                 },
@@ -508,6 +545,6 @@ pub const TypeChecker = struct {
             words,
         );
 
-        self.parameters.push(index);
+        self.procedures.last().parameters.push(index);
     }
 };

@@ -12,6 +12,7 @@ const RangeMap = collections.RangeMap;
 const Constant = checker.Constant;
 const TypeChecker = checker.TypeChecker;
 const Procedure = checker.Procedure;
+const Match = checker.Match;
 
 pub const TempValueBuilder = struct {
     buffer: Vec(u8),
@@ -86,7 +87,7 @@ pub const Generator = struct {
                             words,
                         );
 
-                        arg.* = Constant {
+                        arg.* = Constant{
                             .raw = .{
                                 .value = .{
                                     .identifier = words.extend_range(arg_name),
@@ -166,6 +167,16 @@ pub const Generator = struct {
         }
     }
 
+    pub fn write_match(
+        self: *Generator,
+        match: *const Match,
+        words: *const Vec(u8),
+    ) void {
+        self.buffer.extend("writing match statement\n");
+        _ = match;
+        _ = words;
+    }
+
     pub fn write_procedure(
         self: *Generator,
         name_range: Range,
@@ -207,12 +218,12 @@ pub const Generator = struct {
             "(",
         });
 
-        for (0..procedure.len) |i| {
+        for (0..procedure.parameters.len) |i| {
             if (i > 0) {
                 self.buffer.extend(", ");
             }
 
-            self.buffer.extend(words.range(types[procedure.parameters[i]]));
+            self.buffer.extend(words.range(types[procedure.parameters.items[i]]));
         }
 
         self.buffer.extend(") {\nentry:\n");
