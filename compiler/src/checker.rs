@@ -33,11 +33,6 @@ pub struct ConstantBinary {
     operator: BinaryOperator,
 }
 
-pub struct ConstantCall {
-    offset: Index,
-    inner: Container<Type>,
-}
-
 struct Of {
     matcher: ConstantRaw,
     expression: Constant,
@@ -61,7 +56,6 @@ pub struct Scope {
 pub enum Constant {
     Raw(ConstantRaw),
     Binary(ConstantBinary),
-    Call(ConstantCall),
     Case(ConstantCase),
 }
 
@@ -230,20 +224,10 @@ impl ConstantCase {
 //     }
 // }
 
-impl ConstantCall {
-    fn clone(&self) -> ConstantCall {
-        ConstantCall {
-            offset: self.offset,
-            inner: Container::new(self.inner.pointer()),
-        }
-    }
-}
-
 impl Constant {
     fn set_type(&mut self, inner: Container<Type>) -> bool {
         match self {
             Constant::Binary(ref mut binary) => binary.set_type(inner),
-            Constant::Call(call) => call.inner.eql(&inner),
             Constant::Case(case) => case.set_type(inner),
             Constant::Raw(ref mut raw) => {
                 if raw.inner.is_some() {
@@ -259,26 +243,14 @@ impl Constant {
     pub fn get_type(&self) -> Container<Type> {
         match self {
             Constant::Raw(raw) => Container::new(raw.inner.pointer()),
-            Constant::Call(call) => Container::new(call.inner.pointer()),
             Constant::Case(case) => Container::new(case.inner.pointer()),
             Constant::Binary(binary) => Container::new(binary.inner.pointer()),
-        }
-    }
-
-    pub fn is_number(&self) -> bool {
-        match self {
-            Constant::Raw(raw) => match raw.kind {
-                ConstantKind::Number(_) => true,
-                _ => false,
-            },
-            _ => false,
         }
     }
 
     fn clone(&self) -> Constant {
         match self {
             Constant::Raw(raw) => Constant::Raw(raw.clone()),
-            Constant::Call(call) => Constant::Call(call.clone()),
             Constant::Binary(binary) => Constant::Binary(binary.clone()),
             Constant::Case(case) => Constant::Case(case.clone()),
         }
@@ -287,7 +259,6 @@ impl Constant {
     fn deinit(&self, arena: &mut Arena) {
         match self {
             Constant::Raw(_) => {}
-            Constant::Call(_) => {}
             Constant::Binary(binary) => {
                 binary.left.get().deinit(arena);
                 binary.right.get().deinit(arena);
@@ -368,6 +339,7 @@ impl TypeChecker {
 
     pub fn push_boolean(&mut self, b: bool, words: &Vector<u8>) {
         let inner = self.get_type_from_str(b"bool", words);
+
         self.push_constant(Constant::Raw(ConstantRaw {
             kind: ConstantKind::Boolean(b),
             inner,
@@ -465,10 +437,6 @@ impl TypeChecker {
             c.deinit(&mut self.arena);
         }
 
-        self.arena.dealloc::<Scope>(1);
-
-        self.arguments.clear();
-        self.ofs.clear();
         self.parameters_size = 0;
     }
 
@@ -523,6 +491,8 @@ impl TypeChecker {
             expression,
             inner,
         }));
+
+        self.ofs.clear();
     }
 
     pub fn push_let(&mut self, words: &Vector<u8>) {
@@ -536,10 +506,10 @@ impl TypeChecker {
             panic!("Could not set type of let declaration");
         }
 
-        let pointer = if !constant.is_number() {
-            self.generator.bind_constant(&constant, words)
-        } else {
+        let pointer = if let Constant::Raw(_) = constant {
             0x00
+        } else {
+            self.generator.bind_constant(&constant, words)
         };
 
         self.register_variable(name_range, pointer, constant, words);
@@ -552,7 +522,7 @@ impl TypeChecker {
             panic!("Should not happen");
         };
 
-        let argument_start = self.arguments.len();
+        // let argument_start = self.arguments.len();
         let len = procedure.get().len as usize;
 
         for i in 0..len {
@@ -566,17 +536,19 @@ impl TypeChecker {
             self.arguments.push(constant);
         }
 
-        let buffer = Buffer::new(self.arguments.pointer(argument_start));
+        let offset = self.generator.write_call(
+            Buffer::new(self.arguments.pointer(0)),
+            procedure.get().len,
+            procedure.get().offset,
+            words,
+        );
 
-        let offset = self
-            .generator
-            .write_call(buffer, procedure.get().len, procedure.get().offset);
-        self.push_constant(Constant::Call(ConstantCall {
-            offset,
+        self.push_constant(Constant::Raw(ConstantRaw {
+            kind: ConstantKind::Identifier(offset),
             inner: Container::new(procedure.get().inner.pointer()),
         }));
 
-        self.arguments.set_len(argument_start);
+        self.arguments.clear();
     }
 
     pub fn push_type(&mut self, field_count: usize, annotated_size: usize, words: &Vector<u8>) {
