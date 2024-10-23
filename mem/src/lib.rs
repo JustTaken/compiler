@@ -96,6 +96,10 @@ impl Arena {
         container
     }
 
+    pub fn dealloc<T>(&mut self, count: usize) {
+        self.len -= std::mem::size_of::<T>() * count;
+    }
+
     pub fn print(&self) {
         println!("usage: {} of {}", self.len, self.capacity);
     }

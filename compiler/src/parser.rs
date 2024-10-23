@@ -162,6 +162,10 @@ impl Parser {
             false
         }
     }
+
+    pub fn deinit(&mut self) {
+        self.checker.deinit(&self.lexer.words);
+    }
 }
 
 fn statement(parser: &mut Parser) {
@@ -194,8 +198,8 @@ fn unary(parser: &mut Parser) {
     parser.parse(Precedence::Unary);
 
     match operator {
-        Operator::Bang => parser.checker.push_unary(BinaryOperator::Sum),
-        Operator::Minus => parser.checker.push_unary(BinaryOperator::Sum),
+        Operator::Bang => parser.checker.push_unary(BinaryOperator::Add),
+        Operator::Minus => parser.checker.push_unary(BinaryOperator::Add),
         _ => {}
     }
 }
@@ -213,19 +217,19 @@ fn binary(parser: &mut Parser) {
             parser
                 .checker
                 .push_binary(BinaryOperator::Eq, &parser.lexer.words);
-            parser.checker.push_unary(BinaryOperator::Sum);
+            parser.checker.push_unary(BinaryOperator::Add);
         }
         Operator::GreaterEqual => {
             parser
                 .checker
                 .push_binary(BinaryOperator::Lt, &parser.lexer.words);
-            parser.checker.push_unary(BinaryOperator::Sum);
+            parser.checker.push_unary(BinaryOperator::Add);
         }
         Operator::LessEqual => {
             parser
                 .checker
                 .push_binary(BinaryOperator::Gt, &parser.lexer.words);
-            parser.checker.push_unary(BinaryOperator::Sum);
+            parser.checker.push_unary(BinaryOperator::Add);
         }
         Operator::EqualEqual => parser
             .checker
@@ -238,7 +242,7 @@ fn binary(parser: &mut Parser) {
             .push_binary(BinaryOperator::Lt, &parser.lexer.words),
         Operator::Plus => parser
             .checker
-            .push_binary(BinaryOperator::Sum, &parser.lexer.words),
+            .push_binary(BinaryOperator::Add, &parser.lexer.words),
         Operator::Minus => parser
             .checker
             .push_binary(BinaryOperator::Sub, &parser.lexer.words),
@@ -293,6 +297,7 @@ fn procedure(parser: &mut Parser) {
 
     parser.advance();
     parser.consume(Token::PARENTESISLEFT);
+
     parser.checker.start_scope();
 
     let mut parameter_count: usize = 0;
@@ -420,30 +425,46 @@ fn typ(parser: &mut Parser) {
     };
 
     parser.advance();
-    parser.consume(Token::BRACELEFT);
 
     let mut field_count: usize = 0;
-    while !parser.assert(Token::BRACERIGHT) {
-        let Token::Identifier(field_name) = parser.current else {
+    let mut size: usize = 0;
+
+    if parser.assert(Token::BRACELEFT) {
+        while !parser.assert(Token::BRACERIGHT) {
+            let Token::Identifier(field_name) = parser.current else {
+                panic!("Should not happen");
+            };
+
+            parser.advance();
+            parser.consume(Token::DOUBLECOLON);
+
+            let Token::Identifier(field_type) = parser.current else {
+                panic!("Should not happen");
+            };
+
+            parser.advance();
+            parser.consume(Token::COMMA);
+
+            parser.checker.push_range(field_name);
+            parser.checker.push_range(field_type);
+
+            field_count += 1;
+        }
+    } else {
+        let Token::Number(size_range) = parser.current else {
             panic!("Should not happen");
         };
 
         parser.advance();
-        parser.consume(Token::DOUBLECOLON);
+        parser.consume(Token::SEMICOLON);
 
-        let Token::Identifier(field_type) = parser.current else {
-            panic!("Should not happen");
-        };
-
-        parser.consume(Token::COMMA);
-        parser.checker.push_range(field_name);
-        parser.checker.push_range(field_type);
-
-        field_count += 1;
+        size = util::parse_string(parser.lexer.words.range(size_range));
     }
 
     parser.checker.push_range(iden);
-    parser.checker.push_type(field_count, &parser.lexer.words);
+    parser
+        .checker
+        .push_type(field_count, size, &parser.lexer.words);
 }
 
 fn scope(parser: &mut Parser) {

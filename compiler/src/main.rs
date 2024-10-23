@@ -24,6 +24,8 @@ fn main() {
 
     deallocate(buffer);
 
+    parser.deinit();
+
     println!(
         "took: {} nanos, to run {}",
         start.elapsed().as_nanos(),

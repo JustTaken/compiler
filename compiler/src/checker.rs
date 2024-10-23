@@ -1,11 +1,12 @@
-use crate::generator::Generator;
+use crate::generator::{BinaryOperation, Generator};
 use collections::{Buffer, RangeMap, Vector};
 use mem::{Arena, Container};
 use util::{Index, Range};
 
 pub enum ConstantKind {
     Number(Range),
-    Identifier(Range),
+    Identifier(Index),
+    Parameter(Index),
     Boolean(bool),
 }
 
@@ -14,8 +15,9 @@ pub struct ConstantRaw {
     inner: Container<Type>,
 }
 
+#[derive(Clone)]
 pub enum BinaryOperator {
-    Sum,
+    Add,
     Sub,
     Mul,
     Div,
@@ -32,10 +34,8 @@ pub struct ConstantBinary {
 }
 
 pub struct ConstantCall {
+    offset: Index,
     inner: Container<Type>,
-    arguments: Buffer<Constant>,
-    range: Range,
-    len: Index,
 }
 
 struct Of {
@@ -50,12 +50,11 @@ pub struct ConstantCase {
     expression: Container<Constant>,
 }
 
-pub struct ConstantScope {
-    parent: Container<ConstantScope>,
-    statements: Buffer<Statement>,
-    signature: Index,
-    len: Index,
+pub struct Scope {
+    parent: Container<Scope>,
+    constant: Option<Constant>,
     constant_count: Index,
+    signature: Index,
     inner: Container<Type>,
 }
 
@@ -64,7 +63,6 @@ pub enum Constant {
     Binary(ConstantBinary),
     Call(ConstantCall),
     Case(ConstantCase),
-    Scope(Container<ConstantScope>),
 }
 
 pub enum Statement {
@@ -74,7 +72,8 @@ pub enum Statement {
 
 struct Variable {
     signature: Index,
-    inner: Container<Type>,
+    offset: Index,
+    constant: Constant,
 }
 
 struct Field {
@@ -91,6 +90,7 @@ pub struct Type {
 pub struct Procedure {
     pub parameters: Buffer<Container<Type>>,
     pub len: Index,
+    pub offset: Index,
     pub inner: Container<Type>,
 }
 
@@ -105,14 +105,14 @@ pub struct TypeChecker {
 
     ofs: Vector<Of>,
     parameters: Vector<Container<Type>>,
-    statements: Vector<Statement>,
     arguments: Vector<Constant>,
 
     variables: RangeMap<Variable>,
 
     generator: Generator,
-    last_scope: Container<ConstantScope>,
+    last_scope: Container<Scope>,
     scope_count: Index,
+    parameters_size: Index,
 
     arena: Arena,
 }
@@ -125,11 +125,11 @@ impl BinaryOperator {
         }
     }
 
-    fn to_int(&self) -> usize {
+    fn to_operation(&self) -> BinaryOperation {
         match self {
-            BinaryOperator::Sum => 1,
-            BinaryOperator::Sub => 2,
-            BinaryOperator::Mul => 3,
+            BinaryOperator::Add => BinaryOperation::Add,
+            BinaryOperator::Sub => BinaryOperation::Sub,
+            BinaryOperator::Mul => BinaryOperation::Mul,
             _ => todo!(),
         }
     }
@@ -157,6 +157,15 @@ impl ConstantBinary {
         }
     }
 
+    fn clone(&self) -> ConstantBinary {
+        ConstantBinary {
+            left: Container::new(self.left.pointer()),
+            right: Container::new(self.right.pointer()),
+            operator: self.operator.clone(),
+            inner: Container::new(self.inner.pointer()),
+        }
+    }
+
     pub fn get_left(&self) -> &Container<Constant> {
         &self.left
     }
@@ -165,21 +174,28 @@ impl ConstantBinary {
         &self.right
     }
 
-    pub fn op(&self) -> usize {
-        self.operator.to_int()
+    pub fn op(&self) -> BinaryOperation {
+        self.operator.to_operation()
     }
 }
 
 impl ConstantRaw {
-    pub fn range(&self) -> Range {
-        match self.kind {
-            ConstantKind::Identifier(r) | ConstantKind::Number(r) => r,
-            _ => panic!("Shold not happen"),
-        }
-    }
-
     pub fn value(&self) -> &ConstantKind {
         &self.kind
+    }
+
+    fn clone(&self) -> ConstantRaw {
+        let kind = match self.kind {
+            ConstantKind::Number(n) => ConstantKind::Number(n),
+            ConstantKind::Identifier(i) => ConstantKind::Identifier(i),
+            ConstantKind::Parameter(p) => ConstantKind::Parameter(p),
+            ConstantKind::Boolean(b) => ConstantKind::Boolean(b),
+        };
+
+        ConstantRaw {
+            kind,
+            inner: Container::new(self.inner.pointer()),
+        }
     }
 }
 
@@ -193,28 +209,33 @@ impl ConstantCase {
 
         true
     }
-}
 
-impl ConstantScope {
-    fn set_type(&mut self, inner: Container<Type>) -> bool {
-        if self.inner.is_some() {
-            self.inner.eql(&inner)
-        } else {
-            if self.len == 0 {
-                !inner.is_some()
-            } else if let Statement::Expression(ref mut exp) =
-                self.statements.get_mut(self.len as usize - 1)
-            {
-                self.inner = Container::new(inner.pointer());
-                exp.set_type(inner)
-            } else {
-                !inner.is_some()
-            }
+    fn clone(&self) -> ConstantCase {
+        ConstantCase {
+            inner: Container::new(self.inner.pointer()),
+            ofs: Buffer::new(self.ofs.pointer()),
+            len: self.len,
+            expression: Container::new(self.expression.pointer()),
         }
     }
+}
 
-    pub fn get_statements(&self) -> &[Statement] {
-        self.statements.slice(0, self.len as usize)
+// impl Scope {
+//     fn set_type(&mut self, inner: Container<Type>) -> bool {
+//         if let Some(ref mut constant) = self.constant {
+//             constant.set_type(inner)
+//         } else {
+//             inner.get().size == 0
+//         }
+//     }
+// }
+
+impl ConstantCall {
+    fn clone(&self) -> ConstantCall {
+        ConstantCall {
+            offset: self.offset,
+            inner: Container::new(self.inner.pointer()),
+        }
     }
 }
 
@@ -224,7 +245,6 @@ impl Constant {
             Constant::Binary(ref mut binary) => binary.set_type(inner),
             Constant::Call(call) => call.inner.eql(&inner),
             Constant::Case(case) => case.set_type(inner),
-            Constant::Scope(scope) => scope.get().set_type(inner),
             Constant::Raw(ref mut raw) => {
                 if raw.inner.is_some() {
                     raw.inner.eql(&inner)
@@ -236,21 +256,50 @@ impl Constant {
         }
     }
 
-    pub fn range(&self) -> Range {
-        match self {
-            Constant::Raw(raw) => raw.range(),
-            Constant::Call(call) => call.range,
-            _ => panic!("should not happen"),
-        }
-    }
-
     pub fn get_type(&self) -> Container<Type> {
         match self {
             Constant::Raw(raw) => Container::new(raw.inner.pointer()),
             Constant::Call(call) => Container::new(call.inner.pointer()),
             Constant::Case(case) => Container::new(case.inner.pointer()),
             Constant::Binary(binary) => Container::new(binary.inner.pointer()),
-            Constant::Scope(scope) => Container::new(scope.get().inner.pointer()),
+        }
+    }
+
+    pub fn is_number(&self) -> bool {
+        match self {
+            Constant::Raw(raw) => match raw.kind {
+                ConstantKind::Number(_) => true,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    fn clone(&self) -> Constant {
+        match self {
+            Constant::Raw(raw) => Constant::Raw(raw.clone()),
+            Constant::Call(call) => Constant::Call(call.clone()),
+            Constant::Binary(binary) => Constant::Binary(binary.clone()),
+            Constant::Case(case) => Constant::Case(case.clone()),
+        }
+    }
+
+    fn deinit(&self, arena: &mut Arena) {
+        match self {
+            Constant::Raw(_) => {}
+            Constant::Call(_) => {}
+            Constant::Binary(binary) => {
+                binary.left.get().deinit(arena);
+                binary.right.get().deinit(arena);
+                arena.dealloc::<Constant>(2);
+            }
+            Constant::Case(case) => {
+                for of in case.ofs.slice(0, case.len as usize) {
+                    of.expression.deinit(arena);
+                }
+
+                case.expression.get().deinit(arena);
+            }
         }
     }
 }
@@ -276,7 +325,6 @@ impl TypeChecker {
 
             variables: RangeMap::new(10, &mut self_arena),
 
-            statements: Vector::new(10, &mut self_arena),
             parameters: Vector::new(10, &mut self_arena),
             arguments: Vector::new(10, &mut self_arena),
             ofs: Vector::new(10, &mut self_arena),
@@ -284,6 +332,7 @@ impl TypeChecker {
             generator: Generator::new(path, &mut self_arena),
             last_scope: Container::null(),
             scope_count: 0,
+            parameters_size: 0,
 
             arena: self_arena,
         }
@@ -305,10 +354,7 @@ impl TypeChecker {
 
             while s.is_some() {
                 if s.get().signature == variable.signature {
-                    self.push_constant(Constant::Raw(ConstantRaw {
-                        kind: ConstantKind::Identifier(range),
-                        inner: Container::new(variable.inner.pointer()),
-                    }));
+                    self.push_constant(variable.constant.clone());
 
                     return;
                 }
@@ -339,41 +385,49 @@ impl TypeChecker {
         let type_range = self.ranges.pop();
         let name_range = self.ranges.pop();
         let inner = self.get_type(type_range, words);
+        let size = inner.get().get_size();
 
         self.parameters.push(Container::new(inner.pointer()));
-        self.register_variable(name_range, inner, words);
-    }
+        self.register_variable(
+            name_range,
+            0x00,
+            Constant::Raw(ConstantRaw {
+                kind: ConstantKind::Parameter(self.parameters_size),
+                inner,
+            }),
+            words,
+        );
 
-    fn push_statement(&mut self, statement: Statement) {
-        self.statements.push(statement);
-        self.last_scope.get().len += 1;
+        self.parameters_size += size;
     }
 
     pub fn start_scope(&mut self) {
-        let statements = Buffer::new(self.statements.pointer(self.statements.len()));
-
-        self.last_scope = self.arena.create(ConstantScope {
+        self.last_scope = self.arena.create(Scope {
             parent: Container::new(self.last_scope.pointer()),
-            statements,
             signature: self.scope_count,
-            len: 0,
+            constant: None,
             constant_count: 0,
             inner: Container::null(),
         });
     }
 
     pub fn end_scope(&mut self) {
-        if self.last_scope.get().constant_count > 0 {
-            let constant = self.pop_constant();
-            let inner = constant.get_type();
+        let constant_count = self.last_scope.get().constant_count;
 
-            self.push_statement(Statement::Expression(constant));
-            self.last_scope.get().inner = inner;
+        if constant_count > 1 {
+            panic!("Should not have more than one constant value ranging");
         }
 
-        let ptr = self.last_scope.pointer();
+        let c = if constant_count > 0 {
+            Some(self.pop_constant())
+        } else {
+            None
+        };
+
         self.last_scope = Container::new(self.last_scope.get().parent.pointer());
-        self.push_constant(Constant::Scope(Container::new(ptr)));
+        if let Some(constant) = c {
+            self.push_constant(constant);
+        }
     }
 
     pub fn push_procedure(&mut self, parameter_count: usize, words: &Vector<u8>) {
@@ -381,13 +435,16 @@ impl TypeChecker {
         let name_range = self.ranges.pop();
         let inner = self.get_type(type_range, words);
 
-        if !self
-            .constants
-            .last_mut()
-            .set_type(Container::new(inner.pointer()))
-        {
-            panic!("Could not set the scope last expression type");
-        }
+        let constant = if self.constants.len() > 0 {
+            let mut c = self.pop_constant();
+            if !c.set_type(Container::new(inner.pointer())) {
+                panic!("Could not set the scope last expression type");
+            }
+
+            Some(c)
+        } else {
+            None
+        };
 
         let pointer = self
             .parameters
@@ -399,11 +456,20 @@ impl TypeChecker {
                 inner,
                 len: parameter_count as Index,
                 parameters: Buffer::new(pointer),
+                offset: self.generator.write_procedure(constant.as_ref()),
             },
             words,
         );
 
-        self.generator.write_procedure();
+        if let Some(c) = constant {
+            c.deinit(&mut self.arena);
+        }
+
+        self.arena.dealloc::<Scope>(1);
+
+        self.arguments.clear();
+        self.ofs.clear();
+        self.parameters_size = 0;
     }
 
     pub fn push_case(&mut self, count: usize) {
@@ -470,25 +536,28 @@ impl TypeChecker {
             panic!("Could not set type of let declaration");
         }
 
-        let pointer = self.generator.stack_pointer();
+        let pointer = if !constant.is_number() {
+            self.generator.bind_constant(&constant, words)
+        } else {
+            0x00
+        };
 
-        self.generator.bind_constant(&constant, pointer, words);
-        self.push_statement(Statement::Let(pointer, constant));
-        self.register_variable(name_range, inner, words);
+        self.register_variable(name_range, pointer, constant, words);
+        self.arguments.clear();
     }
 
     pub fn push_call(&mut self, words: &Vector<u8>) {
         let name_range = self.ranges.pop();
-        let Some(procedure) = self.procedures.get(name_range, words) else {
+        let Some(procedure) = self.procedures.addr_of(words.range(name_range), words) else {
             panic!("Should not happen");
         };
 
-        let start = self.constants.len() - procedure.len as u32;
         let argument_start = self.arguments.len();
+        let len = procedure.get().len as usize;
 
-        for i in 0..procedure.len as usize {
-            let mut constant = self.constants.value(start + i as u32);
-            let parameter_inner = procedure.parameters.get(i);
+        for i in 0..len {
+            let mut constant = self.pop_constant();
+            let parameter_inner = procedure.get().parameters.get(len - i - 1);
 
             if !constant.set_type(Container::new(parameter_inner.pointer())) {
                 panic!("Could not set the argument type");
@@ -499,21 +568,24 @@ impl TypeChecker {
 
         let buffer = Buffer::new(self.arguments.pointer(argument_start));
 
-        self.constants.set_len(start);
+        let offset = self
+            .generator
+            .write_call(buffer, procedure.get().len, procedure.get().offset);
         self.push_constant(Constant::Call(ConstantCall {
-            arguments: buffer,
-            range: name_range,
-            inner: Container::new(procedure.inner.pointer()),
-            len: procedure.len,
+            offset,
+            inner: Container::new(procedure.get().inner.pointer()),
         }));
+
+        self.arguments.set_len(argument_start);
     }
 
-    pub fn push_type(&mut self, field_count: usize, words: &Vector<u8>) {
+    pub fn push_type(&mut self, field_count: usize, annotated_size: usize, words: &Vector<u8>) {
         let name_range = self.ranges.pop();
         let start = self.fields.len();
-        let mut size = 0;
 
-        for i in 0..field_count {
+        let mut size: Index = annotated_size as Index;
+
+        for _ in 0..field_count {
             let field_type_range = self.ranges.pop();
             let field_name_range = self.ranges.pop();
             let inner = self.get_type(field_type_range, words);
@@ -597,19 +669,29 @@ impl TypeChecker {
         }
     }
 
-    fn register_variable(&mut self, name_range: Range, inner: Container<Type>, words: &Vector<u8>) {
+    fn register_variable(
+        &mut self,
+        name_range: Range,
+        offset: Index,
+        constant: Constant,
+        words: &Vector<u8>,
+    ) {
         self.variables.push(
             name_range,
             Variable {
                 signature: self.last_scope.get().signature,
-                inner,
+                offset,
+                constant,
             },
             words,
         );
     }
 
-    pub fn clear(&mut self) {
-        self.statements.clear();
-        self.variables.clear();
+    pub fn deinit(&mut self, words: &Vector<u8>) {
+        if let Some(main_procedure) = self.procedures.addr_of(b"main", words) {
+            self.generator.generate(main_procedure.get().offset);
+        } else {
+            panic!("program entry point not found");
+        }
     }
 }

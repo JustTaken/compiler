@@ -1,5 +1,5 @@
 use crate::checker::{Constant, ConstantBinary, ConstantKind};
-use collections::Vector;
+use collections::{Buffer, Vector};
 use mem::Arena;
 use std::io::Write;
 use util::{Index, Range};
@@ -36,7 +36,7 @@ struct ProgramHeader {
     align: u64,
 }
 
-struct Number(usize);
+struct Immediate(usize);
 
 enum Register {
     Rax,
@@ -46,47 +46,126 @@ enum Register {
     Rdx,
     Rsi,
     Rsp,
+    Rbp,
 }
 
 enum Source {
     Register(Register),
-    Memory(Register, Number),
-    Number(Number),
+    Memory(Register, Immediate),
+    Immediate(Immediate),
 }
 
 enum Destination {
     Register(Register),
-    Memory(Register, Number),
+    Memory(Register, Immediate),
+}
+
+pub enum BinaryOperation {
+    Mov,
+    Add,
+    Sub,
+    Mul,
 }
 
 enum Operation {
-    Mov(Destination, Source),
-    Add(Destination, Source),
-    Sub(Destination, Source),
-    Mul(Destination, Source),
+    Binary(BinaryOperation, Destination, Source),
+    Call(Immediate),
+    Push(Source),
+    Ret,
     Syscall,
 }
 
 pub struct Generator {
     buffer: Vector<u8>,
     operations: Vector<Operation>,
-    stack: Index,
     code_len: Index,
+    stack: Index,
     arena: Arena,
     file: std::fs::File,
 }
 
-trait AsBytes {
-    type Item;
-    fn write(&self, arg: Self::Item, buffer: &mut Vector<u8>);
-    fn size(&self) -> Index;
+impl Immediate {
+    fn write(&self, bytes: usize, buffer: &mut Vector<u8>) {
+        for i in 0..bytes {
+            buffer.push((self.0 >> (8 * i)) as u8);
+        }
+    }
+
+    fn value(&self) -> usize {
+        self.0
+    }
 }
 
-impl AsBytes for Register {
-    type Item = u8;
+impl Operation {
+    fn write(&self, buffer: &mut Vector<u8>) {
+        println!("{:?}", self);
 
-    fn write(&self, offset: Self::Item, buffer: &mut Vector<u8>) {
-        let value = match self {
+        match self {
+            Operation::Syscall => buffer.extend(&[0x0F, 0x05]),
+            Operation::Ret => buffer.push(0xC3),
+            Operation::Push(source) => match source {
+                Source::Register(r) => {
+                    buffer.push(0x50 + r.value());
+                }
+                Source::Memory(r, imm) => {
+                    buffer.extend(&[0xFF, 0b01110000 + r.value()]);
+                    imm.write(1, buffer);
+                }
+                Source::Immediate(imm) => {
+                    buffer.push(0x68);
+                    imm.write(4, buffer);
+                }
+            },
+            Operation::Call(i) => {
+                let offset =
+                    Immediate((i.value() as isize - buffer.len() as isize) as usize - 0x05);
+                buffer.push(0xE8);
+                offset.write(4, buffer);
+            }
+            Operation::Binary(binary, destin, source) => match (binary, destin, source) {
+                (BinaryOperation::Mov, Destination::Register(rd), Source::Register(rs)) => {
+                    buffer.extend(&[0x48, 0x89, 0b11000000 + (rs.value() << 3) + rd.value()]);
+                }
+                (BinaryOperation::Mov, Destination::Memory(rd, imm), Source::Register(rs)) => {
+                    buffer.extend(&[0x89, 0b01000000 + (rs.value() << 3) + rd.value()]);
+                    imm.write(1, buffer);
+                }
+                (BinaryOperation::Mov, Destination::Register(r), Source::Immediate(imm)) => {
+                    buffer.push(0xB8 + r.value());
+                    imm.write(4, buffer);
+                }
+                (BinaryOperation::Add, Destination::Register(rd), Source::Register(rs)) => {
+                    buffer.extend(&[0x01, 0b11000000 + (rs.value() << 3) + rd.value()])
+                }
+                (BinaryOperation::Add, Destination::Memory(rd, imm), Source::Register(rs)) => {
+                    buffer.extend(&[0x01, 0b01000000 + (rs.value() << 3) + rd.value()]);
+                    imm.write(1, buffer);
+                }
+                (BinaryOperation::Add, Destination::Register(r), Source::Immediate(imm)) => {
+                    buffer.extend(&[0x48, 0x83, 0b11000000 + r.value()]);
+                    imm.write(1, buffer);
+                }
+                (BinaryOperation::Sub, Destination::Register(rd), Source::Register(rs)) => {
+                    buffer.extend(&[0x29, 0b11000000 + (rs.value() << 3) + rd.value()])
+                }
+                (BinaryOperation::Sub, Destination::Memory(rd, imm), Source::Register(rs)) => {
+                    buffer.extend(&[0x29, 0b01000000 + (rs.value() << 3) + rd.value()]);
+                    imm.write(1, buffer);
+                }
+                (BinaryOperation::Sub, Destination::Register(r), Source::Immediate(imm)) => {
+                    buffer.extend(&[0x48, 0x83, 0b11101000 + r.value()]);
+                    imm.write(1, buffer);
+                }
+
+                _ => {}
+            },
+        }
+    }
+}
+
+impl Register {
+    fn value(&self) -> u8 {
+        match self {
             Register::Rax => 0x00,
             Register::Rbx => 0x03,
             Register::Rcx => 0x01,
@@ -94,72 +173,7 @@ impl AsBytes for Register {
             Register::Rdx => 0x02,
             Register::Rsi => 0x06,
             Register::Rsp => 0x04,
-        };
-
-        buffer.push(offset + value);
-    }
-
-    fn size(&self) -> Index {
-        1
-    }
-}
-
-impl AsBytes for Number {
-    type Item = usize;
-
-    fn write(&self, bytes: Self::Item, buffer: &mut Vector<u8>) {
-        for i in 0..bytes {
-            buffer.push((self.0 >> (8 * i)) as u8);
-        }
-    }
-
-    fn size(&self) -> Index {
-        0
-    }
-}
-
-impl AsBytes for Destination {
-    type Item = u8;
-
-    fn write(&self, offset: Self::Item, buffer: &mut Vector<u8>) {
-        match self {
-            Destination::Register(r) => r.write(offset, buffer),
-            Destination::Memory(_, _) => todo!(),
-        }
-    }
-
-    fn size(&self) -> Index {
-        match self {
-            Destination::Register(r) => r.size(),
-            Destination::Memory(_, _) => todo!(),
-        }
-    }
-}
-
-impl AsBytes for Source {
-    type Item = usize;
-
-    fn write(&self, bytes: Self::Item, buffer: &mut Vector<u8>) {
-        match self {
-            Source::Number(n) => n.write(bytes, buffer),
-            Source::Register(_) => todo!(),
-            Source::Memory(r, n) => todo!(),
-        }
-    }
-
-    fn size(&self) -> Index {
-        0
-    }
-}
-
-impl Operation {
-    fn new(i: usize, destination: Destination, value: Source) -> Operation {
-        match i {
-            0 => Operation::Mov(destination, value),
-            1 => Operation::Add(destination, value),
-            2 => Operation::Sub(destination, value),
-            3 => Operation::Mul(destination, value),
-            _ => panic!("Should not happen"),
+            Register::Rbp => 0x05,
         }
     }
 }
@@ -174,6 +188,7 @@ impl std::fmt::Debug for Register {
             Register::Rsi => write!(f, "Regsiter(Rsi)"),
             Register::Rsp => write!(f, "Regsiter(Rsp)"),
             Register::Rdx => write!(f, "Regsiter(Rdx)"),
+            Register::Rbp => write!(f, "Regsiter(Rbp)"),
         }
     }
 }
@@ -181,8 +196,10 @@ impl std::fmt::Debug for Register {
 impl std::fmt::Debug for Destination {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Destination::Register(r) => write!(f, "Destination({:?})", r),
-            Destination::Memory(_, _) => panic!("Should not happen"),
+            Destination::Register(r) => write!(f, "Destination::Register({:?})", r),
+            Destination::Memory(r, Immediate(i)) => {
+                write!(f, "Destination::Memory({:?}, {:#010x})", r, i)
+            }
         }
     }
 }
@@ -190,9 +207,9 @@ impl std::fmt::Debug for Destination {
 impl std::fmt::Debug for Source {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Source::Register(r) => write!(f, "Source({:?})", r),
-            Source::Number(Number(n)) => write!(f, "Source({})", n),
-            Source::Memory(r, Number(n)) => write!(f, "Source(Memory({:?}, {}))", r, n),
+            Source::Register(r) => write!(f, "Source::Register({:?})", r),
+            Source::Immediate(Immediate(n)) => write!(f, "Source::Immediate({:#010x})", n),
+            Source::Memory(r, Immediate(n)) => write!(f, "Source::Memory({:?}, {:#010x})", r, n),
         }
     }
 }
@@ -200,12 +217,16 @@ impl std::fmt::Debug for Source {
 impl std::fmt::Debug for Operation {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Operation::Mov(destination, value) => write!(f, "Mov({:?}, {:?})", destination, value),
-            Operation::Add(destination, value) => write!(f, "Add({:?}, {:?})", destination, value),
-            Operation::Sub(destination, value) => write!(f, "Sub({:?}, {:?})", destination, value),
-            Operation::Mul(destination, value) => write!(f, "Mul({:?}, {:?})", destination, value),
             Operation::Syscall => write!(f, "Syscall"),
-            _ => write!(f, ""),
+            Operation::Ret => write!(f, "Ret"),
+            Operation::Call(Immediate(i)) => write!(f, "Call({:#010x})", i),
+            Operation::Push(source) => write!(f, "Push({:?})", source),
+            Operation::Binary(binary, destination, source) => match binary {
+                BinaryOperation::Mov => write!(f, "Mov({:?}, {:?})", destination, source),
+                BinaryOperation::Add => write!(f, "Add({:?}, {:?})", destination, source),
+                BinaryOperation::Sub => write!(f, "Sub({:?}, {:?})", destination, source),
+                BinaryOperation::Mul => write!(f, "Mul({:?}, {:?})", destination, source),
+            },
         }
     }
 }
@@ -234,67 +255,13 @@ impl Generator {
         }
     }
 
-    fn operation_size(&self, operation: &Operation) -> Index {
-        match operation {
-            Operation::Syscall => 0x02,
-            Operation::Add(destin, _) => destin.size() + 0x02,
-            Operation::Sub(destin, _) => destin.size() + 0x02,
-            Operation::Mov(destin, _) => destin.size() + 0x04,
-            Operation::Mul(destin, _) => destin.size() + 0x04,
-        }
-    }
-
-    fn write_operation(&mut self, operation: &Operation) {
-        match operation {
-            Operation::Syscall => self.buffer.extend(&[0x0F, 0x05]),
-            Operation::Add(destin, source) => {
-                self.buffer.push(0x83);
-
-                destin.write(0xC0, &mut self.buffer);
-                source.write(1, &mut self.buffer);
-            }
-            Operation::Sub(destin, source) => {
-                self.buffer.push(0x83);
-
-                destin.write(0xE8, &mut self.buffer);
-                source.write(1, &mut self.buffer);
-            }
-            Operation::Mul(destin, source) => {
-                self.buffer.push(0x6B);
-
-                destin.write(0xC0, &mut self.buffer);
-                source.write(1, &mut self.buffer);
-            }
-            Operation::Mov(destin, source) => match (destin, source) {
-                (Destination::Register(rd), Source::Number(n)) => {
-                    rd.write(0xB8, &mut self.buffer);
-                    n.write(4, &mut self.buffer);
-                }
-                (Destination::Memory(rd, n), Source::Register(rs)) => {
-                    // This just works if the source is RAX and the destination memory is base on the RSP register
-                    self.buffer.push(0x89);
-                    rs.write(0x44, &mut self.buffer);
-
-                    self.buffer.push(0x24);
-
-                    n.write(1, &mut self.buffer);
-                }
-                _ => panic!("Should not happen"),
-            },
-        }
-    }
-
     fn write_bytes<T>(&mut self, t: &T) {
         self.buffer.extend(unsafe {
             std::slice::from_raw_parts(t as *const T as *const u8, std::mem::size_of::<T>())
         });
     }
 
-    pub fn stack_pointer(&self) -> Index {
-        self.stack
-    }
-
-    fn write_binary(&mut self, op: usize, binary: &ConstantBinary, words: &Vector<u8>) {
+    fn write_binary(&mut self, op: BinaryOperation, binary: &ConstantBinary, words: &Vector<u8>) {
         let left = binary.get_left();
         let right = binary.get_right();
 
@@ -302,23 +269,24 @@ impl Generator {
         self.write_constant(binary.op(), right.get(), words);
     }
 
-    pub fn write_constant(&mut self, op: usize, constant: &Constant, words: &Vector<u8>) {
+    pub fn write_constant(&mut self, op: BinaryOperation, constant: &Constant, words: &Vector<u8>) {
         match constant {
             Constant::Binary(binary) => self.write_binary(op, &binary, words),
+            Constant::Call(call) => {
+                // self.operations
+                //     .push(Operation::Call(Immediate(call.procedure_offset() as usize)));
+            }
             Constant::Raw(r) => match r.value() {
                 ConstantKind::Identifier(_) => {}
                 ConstantKind::Number(range) => {
                     let value = words.range(*range);
                     let number = util::parse_string(value);
-                    let operation = Operation::new(
+
+                    self.operations.push(Operation::Binary(
                         op,
                         Destination::Register(Register::Rax),
-                        Source::Number(Number(number)),
-                    );
-
-                    self.stack += constant.get_type().get().get_size();
-                    self.code_len += self.operation_size(&operation);
-                    self.operations.push(operation);
+                        Source::Immediate(Immediate(number)),
+                    ));
                 }
                 _ => {}
             },
@@ -326,32 +294,93 @@ impl Generator {
         }
     }
 
-    pub fn bind_constant(&mut self, constant: &Constant, stack_pointer: Index, words: &Vector<u8>) {
-        self.write_constant(0, constant, words);
-        // self.operations.push(Operation::Mov(
-        //     Destination::Memory(Number(0x00)),
-        //     Source::Register(Register::Rax),
-        // ));
+    pub fn bind_constant(&mut self, constant: &Constant, words: &Vector<u8>) -> Index {
+        self.stack += constant.get_type().get().get_size();
+        self.write_constant(BinaryOperation::Mov, constant, words);
+
+        self.operations.push(Operation::Binary(
+            BinaryOperation::Mov,
+            Destination::Memory(Register::Rbp, Immediate(-(self.stack as isize) as usize)),
+            Source::Register(Register::Rax),
+        ));
+
+        self.stack
     }
 
-    pub fn write_procedure(&mut self) {
-        // self.write_operation(&Operation::Sub(
-        //     Destination::Register(Register::Rsp),
-        //     Source::Number(Number(self.stack as usize)),
-        // ));
-        // for i in 0..self.operations.len() {
-        //     let op = self.operations.value(i);
+    pub fn write_call(&mut self, call: Buffer<Constant>, len: Index, offset: Index) -> Index {
+        self.operations
+            .push(Operation::Call(Immediate(offset as usize)));
+        self.stack
+    }
 
-        //     self.write_operation(&op);
-        // }
+    pub fn write_procedure(&mut self, constant: Option<&Constant>) -> Index {
+        let non_zero_stack = self.stack != 0;
 
-        println!("{:?}", self.operations);
+        if non_zero_stack {
+            let procedure_stack_init = &[
+                Operation::Binary(
+                    BinaryOperation::Mov,
+                    Destination::Register(Register::Rbp),
+                    Source::Register(Register::Rsp),
+                ),
+                Operation::Binary(
+                    BinaryOperation::Sub,
+                    Destination::Register(Register::Rsp),
+                    Source::Immediate(Immediate(self.stack as usize)),
+                ),
+            ];
 
+            for op in procedure_stack_init {
+                op.write(&mut self.buffer);
+            }
+        }
+
+        for op in self.operations.offset(0) {
+            op.write(&mut self.buffer);
+        }
+
+        if non_zero_stack {
+            Operation::Binary(
+                BinaryOperation::Mov,
+                Destination::Register(Register::Rsp),
+                Source::Register(Register::Rbp),
+            )
+            .write(&mut self.buffer);
+        }
+
+        Operation::Ret.write(&mut self.buffer);
+
+        let code_len = self.code_len;
+
+        self.code_len = self.buffer.len() as Index;
+        self.stack = 0;
         self.operations.clear();
+
+        code_len
     }
 
-    pub fn generate(&mut self) {
-        let start = self.buffer.len();
+    pub fn generate(&mut self, main_procedure_offset: Index) {
+        let instructions_end = self.buffer.len();
+        let program_end = &[
+            Operation::Call(Immediate(main_procedure_offset as usize)),
+            Operation::Binary(
+                BinaryOperation::Mov,
+                Destination::Register(Register::Rax),
+                Source::Immediate(Immediate(0x3C)),
+            ),
+            Operation::Binary(
+                BinaryOperation::Mov,
+                Destination::Register(Register::Rdi),
+                Source::Immediate(Immediate(0x00)),
+            ),
+            Operation::Syscall,
+        ];
+
+        for op in program_end {
+            op.write(&mut self.buffer);
+        }
+
+        let code_len = self.buffer.len();
         let elf_header_size = std::mem::size_of::<ElfHeader>();
         let program_header_size = std::mem::size_of::<ProgramHeader>();
         let code_start_offset = program_header_size * PROGRAM_HEADER_COUNT + elf_header_size;
@@ -363,8 +392,8 @@ impl Generator {
             offset: code_start_offset as u64,
             vaddr: code_virtual_position as u64,
             paddr: code_virtual_position as u64,
-            file_size: self.code_len as u64,
-            mem_size: self.code_len as u64,
+            file_size: code_len as u64,
+            mem_size: code_len as u64,
             align: 0x1000,
         }];
 
@@ -376,7 +405,7 @@ impl Generator {
             kind: 0x02,
             machine: 0x3e,
             version: 0x01,
-            entry: code_virtual_position as u64,
+            entry: code_virtual_position as u64 + instructions_end as u64,
             phoff: elf_header_size as u64,
             shoff: 0x00,
             flags: 0x00,
@@ -396,11 +425,11 @@ impl Generator {
 
         _ = self
             .file
-            .write_all(self.buffer.offset(start as usize))
+            .write_all(self.buffer.offset(code_len as usize))
             .unwrap();
         _ = self
             .file
-            .write_all(self.buffer.range(Range::new(0, start)))
+            .write_all(self.buffer.range(Range::new(0, code_len)))
             .unwrap();
     }
 }

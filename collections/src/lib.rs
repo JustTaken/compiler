@@ -38,6 +38,10 @@ impl<T> Buffer<T> {
         unsafe { std::ptr::write(self.ptr.add(index), item) };
     }
 
+    pub fn pointer(&self) -> *mut T {
+        self.ptr
+    }
+
     pub fn get_mut(&mut self, index: usize) -> &mut T {
         unsafe { &mut *self.ptr.add(index) }
     }
