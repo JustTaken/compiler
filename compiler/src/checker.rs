@@ -6,7 +6,6 @@ use util::{Index, Range};
 pub enum ConstantKind {
     Number(usize),
     Identifier(Source),
-    Parameter(Index),
     Boolean(bool),
 }
 
@@ -197,7 +196,6 @@ impl ConstantRaw {
         let kind = match &self.kind {
             ConstantKind::Number(n) => ConstantKind::Number(*n),
             ConstantKind::Identifier(src) => ConstantKind::Identifier(src.clone()),
-            ConstantKind::Parameter(p) => ConstantKind::Parameter(*p),
             ConstantKind::Boolean(b) => ConstantKind::Boolean(*b),
         };
 
@@ -278,7 +276,6 @@ impl Constant {
             Constant::Raw(raw) => match &raw.kind {
                 ConstantKind::Identifier(source) => source.clone(),
                 ConstantKind::Number(value) => Source::Immediate(Immediate(*value as usize)),
-                ConstantKind::Parameter(offset) => Source::Immediate(Immediate(*offset as usize)),
                 _ => panic!("Should not happen"),
             },
         }
@@ -401,7 +398,10 @@ impl TypeChecker {
         self.register_variable(
             name_range,
             Constant::Raw(ConstantRaw {
-                kind: ConstantKind::Parameter(self.parameters_size),
+                kind: ConstantKind::Identifier(Source::Memory(
+                    Register::Rbp,
+                    Immediate(self.parameters_size as usize),
+                )),
                 inner,
             }),
             words,
