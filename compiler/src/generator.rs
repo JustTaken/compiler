@@ -1,4 +1,4 @@
-use crate::checker::{Constant, ConstantBinary, ConstantKind};
+use crate::checker::{Constant, ConstantBinary};
 use collections::{Buffer, Vector};
 use mem::Arena;
 use std::io::Write;
@@ -36,9 +36,9 @@ struct ProgramHeader {
     align: u64,
 }
 
-struct Immediate(usize);
+pub struct Immediate(pub usize);
 
-enum Register {
+pub enum Register {
     Rax,
     Rbx,
     Rcx,
@@ -49,14 +49,14 @@ enum Register {
     Rbp,
 }
 
-enum Source {
+pub enum Source {
     Register(Register),
     Memory(Register, Immediate),
     Immediate(Immediate),
     Pop,
 }
 
-enum Destination {
+pub enum Destination {
     Register(Register),
     Memory(Register, Immediate),
     Push,
@@ -139,6 +139,10 @@ impl Operation {
                 (BinaryOperation::Mov, Destination::Register(rd), Source::Register(rs)) => {
                     buffer.extend(&[0x48, 0x89, 0b11000000 + (rs.value() << 3) + rd.value()]);
                 }
+                (BinaryOperation::Mov, Destination::Register(rd), Source::Memory(rs, imm)) => {
+                    buffer.extend(&[0x8B, 0b01000000 + (rd.value() << 3) + rs.value()]);
+                    imm.write(1, buffer);
+                }
                 (BinaryOperation::Mov, Destination::Memory(rd, imm), Source::Register(rs)) => {
                     buffer.extend(&[0x89, 0b01000000 + (rs.value() << 3) + rd.value()]);
                     imm.write(1, buffer);
@@ -155,7 +159,7 @@ impl Operation {
                     imm.write(1, buffer);
                 }
                 (BinaryOperation::Add, Destination::Register(r), Source::Immediate(imm)) => {
-                    buffer.extend(&[0x48, 0x83, 0b11000000 + r.value()]);
+                    buffer.extend(&[0x83, 0b11000000 + r.value()]);
                     imm.write(1, buffer);
                 }
                 (BinaryOperation::Sub, Destination::Register(rd), Source::Register(rs)) => {
@@ -190,7 +194,7 @@ impl Register {
         }
     }
 
-    fn clone(&self) -> Register {
+    pub fn clone(&self) -> Register {
         match self {
             Register::Rax => Register::Rax,
             Register::Rbx => Register::Rbx,
@@ -200,6 +204,17 @@ impl Register {
             Register::Rsi => Register::Rsi,
             Register::Rsp => Register::Rsp,
             Register::Rbp => Register::Rbp,
+        }
+    }
+}
+
+impl Source {
+    pub fn clone(&self) -> Source {
+        match self {
+            Source::Register(r) => Source::Register(r.clone()),
+            Source::Memory(r, imm) => Source::Memory(r.clone(), imm.clone()),
+            Source::Immediate(imm) => Source::Immediate(imm.clone()),
+            Source::Pop => Source::Pop,
         }
     }
 }
@@ -258,11 +273,10 @@ impl std::fmt::Debug for Operation {
     }
 }
 
-struct ProgramFlag;
-impl ProgramFlag {
-    const EXECUTABLE: u32 = 0x1;
-    const WRITEABLE: u32 = 0x2;
-    const READABLE: u32 = 0x3;
+mod program_flag {
+    pub const EXECUTABLE: u32 = 0x1;
+    pub const WRITEABLE: u32 = 0x2;
+    pub const READABLE: u32 = 0x3;
 }
 
 const PROGRAM_HEADER_COUNT: usize = 0x1;
@@ -311,53 +325,33 @@ impl Generator {
     ) {
         match constant {
             Constant::Binary(binary) => self.write_binary(op, &binary, destination, words),
-            Constant::Raw(r) => match r.value() {
-                ConstantKind::Identifier(offset) => {
-                    self.operations.push(Operation::Binary(
-                        op,
-                        destination.clone(),
-                        Source::Memory(Register::Rbp, Immediate(*offset as usize)),
-                    ));
-                }
-                ConstantKind::Parameter(offset) => {
-                    self.operations.push(Operation::Binary(
-                        op,
-                        destination.clone(),
-                        Source::Memory(Register::Rbp, Immediate(-(*offset as isize) as usize)),
-                    ));
-                }
-                ConstantKind::Number(range) => {
-                    let value = words.range(*range);
-                    let number = util::parse_string(value);
-
-                    self.operations.push(Operation::Binary(
-                        op,
-                        destination.clone(),
-                        Source::Immediate(Immediate(number)),
-                    ));
-                }
-                _ => {}
-            },
+            Constant::Raw(_) => self.operations.push(Operation::Binary(
+                op,
+                destination.clone(),
+                constant.get_value(),
+            )),
             _ => {}
         }
     }
 
-    pub fn bind_constant(&mut self, constant: &Constant, words: &Vector<u8>) -> Index {
+    pub fn bind_constant(&mut self, constant: &Constant, words: &Vector<u8>) -> usize {
         self.stack += constant.get_type().get().get_size();
         self.write_constant(
             BinaryOperation::Mov,
-            &Destination::Register(Register::Rax),
+            &Destination::Register(Register::Rbx),
             constant,
             words,
         );
 
+        let offset = -(self.stack as isize) as usize;
+
         self.operations.push(Operation::Binary(
             BinaryOperation::Mov,
-            Destination::Memory(Register::Rbp, Immediate(-(self.stack as isize) as usize)),
-            Source::Register(Register::Rax),
+            Destination::Memory(Register::Rbp, Immediate(offset)),
+            Source::Register(Register::Rbx),
         ));
 
-        self.stack
+        offset
     }
 
     pub fn write_call(
@@ -366,7 +360,7 @@ impl Generator {
         len: Index,
         offset: Index,
         words: &Vector<u8>,
-    ) -> Index {
+    ) {
         let arguments = args.slice(0, len as usize);
 
         for arg in arguments {
@@ -375,7 +369,7 @@ impl Generator {
             } else {
                 self.write_constant(
                     BinaryOperation::Mov,
-                    &Destination::Register(Register::Rax),
+                    &Destination::Register(Register::Rbx),
                     arg,
                     words,
                 );
@@ -383,14 +377,13 @@ impl Generator {
                 self.operations.push(Operation::Binary(
                     BinaryOperation::Mov,
                     Destination::Push,
-                    Source::Register(Register::Rax),
+                    Source::Register(Register::Rbx),
                 ));
             }
         }
 
         self.operations
             .push(Operation::Call(Immediate(offset as usize)));
-        self.stack
     }
 
     pub fn write_procedure(&mut self, constant: Option<&Constant>) -> Index {
@@ -415,20 +408,32 @@ impl Generator {
             }
         }
 
-        for op in self.operations.offset(0) {
-            op.write(&mut self.buffer);
+        if let Some(c) = constant {
+            let source = c.get_value();
+
+            if let Source::Register(Register::Rax) = source {
+            } else {
+                self.operations.push(Operation::Binary(
+                    BinaryOperation::Mov,
+                    Destination::Register(Register::Rax),
+                    source,
+                ))
+            }
         }
 
         if non_zero_stack {
-            Operation::Binary(
+            self.operations.push(Operation::Binary(
                 BinaryOperation::Mov,
                 Destination::Register(Register::Rsp),
                 Source::Register(Register::Rbp),
-            )
-            .write(&mut self.buffer);
+            ));
         }
 
-        Operation::Ret.write(&mut self.buffer);
+        self.operations.push(Operation::Ret);
+
+        for op in self.operations.offset(0) {
+            op.write(&mut self.buffer);
+        }
 
         let code_len = self.code_len;
 
@@ -445,13 +450,13 @@ impl Generator {
             Operation::Call(Immediate(main_procedure_offset as usize)),
             Operation::Binary(
                 BinaryOperation::Mov,
-                Destination::Register(Register::Rax),
-                Source::Immediate(Immediate(0x3C)),
+                Destination::Register(Register::Rdi),
+                Source::Register(Register::Rax),
             ),
             Operation::Binary(
                 BinaryOperation::Mov,
-                Destination::Register(Register::Rdi),
-                Source::Immediate(Immediate(0x00)),
+                Destination::Register(Register::Rax),
+                Source::Immediate(Immediate(0x3C)),
             ),
             Operation::Syscall,
         ];
@@ -468,7 +473,7 @@ impl Generator {
 
         let program_headers: &[ProgramHeader; PROGRAM_HEADER_COUNT] = &[ProgramHeader {
             kind: 0x01,
-            flags: ProgramFlag::READABLE | ProgramFlag::EXECUTABLE,
+            flags: program_flag::READABLE | program_flag::EXECUTABLE,
             offset: code_start_offset as u64,
             vaddr: code_virtual_position as u64,
             paddr: code_virtual_position as u64,

@@ -1,6 +1,6 @@
 use mem::Arena;
 
-use crate::checker::{BinaryOperator, TypeChecker};
+use crate::checker::{BinaryOperator, TypeChecker, UnaryOperator};
 use crate::lexer::{Keyword, Lexer, Operator, Symbol, Token};
 
 #[repr(u32)]
@@ -198,8 +198,8 @@ fn unary(parser: &mut Parser) {
     parser.parse(Precedence::Unary);
 
     match operator {
-        Operator::Bang => parser.checker.push_unary(BinaryOperator::Add),
-        Operator::Minus => parser.checker.push_unary(BinaryOperator::Add),
+        Operator::Bang => parser.checker.push_unary(UnaryOperator::Negation),
+        Operator::Minus => parser.checker.push_unary(UnaryOperator::Oposite),
         _ => {}
     }
 }
@@ -217,19 +217,19 @@ fn binary(parser: &mut Parser) {
             parser
                 .checker
                 .push_binary(BinaryOperator::Eq, &parser.lexer.words);
-            parser.checker.push_unary(BinaryOperator::Add);
+            parser.checker.push_unary(UnaryOperator::Negation);
         }
         Operator::GreaterEqual => {
             parser
                 .checker
                 .push_binary(BinaryOperator::Lt, &parser.lexer.words);
-            parser.checker.push_unary(BinaryOperator::Add);
+            parser.checker.push_unary(UnaryOperator::Negation);
         }
         Operator::LessEqual => {
             parser
                 .checker
                 .push_binary(BinaryOperator::Gt, &parser.lexer.words);
-            parser.checker.push_unary(BinaryOperator::Add);
+            parser.checker.push_unary(UnaryOperator::Negation);
         }
         Operator::EqualEqual => parser
             .checker
@@ -271,12 +271,32 @@ fn identifier(parser: &mut Parser) {
         panic!("Should not happen")
     };
 
-    if parser.assert(Token::Symbol(Symbol::ParentesisLeft)) {
+    if parser.assert(Token::PARENTESISLEFT) {
         call(parser);
         parser.checker.push_range(range);
         parser.checker.push_call(&parser.lexer.words);
+    } else if parser.assert(Token::BRACELEFT) {
+        construct(parser);
+        parser.checker.push_range(range);
+        parser.checker.push_construct(&parser.lexer.words);
     } else {
         parser.checker.push_identifier(range, &parser.lexer.words);
+    }
+}
+
+fn construct(parser: &mut Parser) {
+    while !parser.assert(Token::BRACERIGHT) {
+        let Token::Identifier(range) = parser.current else {
+            panic!("Should not happen");
+        };
+
+        parser.advance();
+        parser.consume(Token::DOUBLECOLON);
+
+        expression(parser);
+
+        parser.consume(Token::COMMA);
+        parser.checker.push_range(range);
     }
 }
 
@@ -285,7 +305,7 @@ fn number(parser: &mut Parser) {
         panic!("Should not happen")
     };
 
-    parser.checker.push_number(range);
+    parser.checker.push_number(range, &parser.lexer.words);
 }
 
 fn procedure(parser: &mut Parser) {
@@ -391,7 +411,7 @@ fn case(parser: &mut Parser) {
 
         match parser.current {
             Token::Identifier(r) => parser.checker.push_identifier(r, &parser.lexer.words),
-            Token::Number(r) => parser.checker.push_number(r),
+            Token::Number(r) => parser.checker.push_number(r, &parser.lexer.words),
             Token::Keyword(k) => match k {
                 Keyword::True => parser.checker.push_boolean(true, &parser.lexer.words),
                 Keyword::False => parser.checker.push_boolean(false, &parser.lexer.words),

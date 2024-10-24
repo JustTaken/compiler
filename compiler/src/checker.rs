@@ -1,11 +1,11 @@
-use crate::generator::{BinaryOperation, Generator};
+use crate::generator::{BinaryOperation, Generator, Immediate, Register, Source};
 use collections::{Buffer, RangeMap, Vector};
 use mem::{Arena, Container};
 use util::{Index, Range};
 
 pub enum ConstantKind {
-    Number(Range),
-    Identifier(Index),
+    Number(usize),
+    Identifier(Source),
     Parameter(Index),
     Boolean(bool),
 }
@@ -26,11 +26,22 @@ pub enum BinaryOperator {
     Eq,
 }
 
+#[derive(Clone)]
+pub enum UnaryOperator {
+    Negation,
+    Oposite,
+}
+
 pub struct ConstantBinary {
     left: Container<Constant>,
     right: Container<Constant>,
     inner: Container<Type>,
     operator: BinaryOperator,
+}
+
+pub struct ConstantUnary {
+    constant: Container<Constant>,
+    operator: UnaryOperator,
 }
 
 struct Of {
@@ -50,6 +61,8 @@ pub struct Scope {
     constant: Option<Constant>,
     constant_count: Index,
     signature: Index,
+    variables: Buffer<Container<Range>>,
+    variable_count: Index,
     inner: Container<Type>,
 }
 
@@ -57,6 +70,7 @@ pub enum Constant {
     Raw(ConstantRaw),
     Binary(ConstantBinary),
     Case(ConstantCase),
+    Unary(ConstantUnary),
 }
 
 pub enum Statement {
@@ -66,7 +80,6 @@ pub enum Statement {
 
 struct Variable {
     signature: Index,
-    offset: Index,
     constant: Constant,
 }
 
@@ -79,13 +92,14 @@ pub struct Type {
     fields: Buffer<Field>,
     len: Index,
     size: Index,
+    align: Index,
 }
 
 pub struct Procedure {
-    pub parameters: Buffer<Container<Type>>,
-    pub len: Index,
-    pub offset: Index,
-    pub inner: Container<Type>,
+    parameters: Buffer<Container<Type>>,
+    len: Index,
+    offset: Index,
+    inner: Container<Type>,
 }
 
 pub struct TypeChecker {
@@ -102,6 +116,7 @@ pub struct TypeChecker {
     arguments: Vector<Constant>,
 
     variables: RangeMap<Variable>,
+    variable_ranges: Vector<Container<Range>>,
 
     generator: Generator,
     last_scope: Container<Scope>,
@@ -179,11 +194,11 @@ impl ConstantRaw {
     }
 
     fn clone(&self) -> ConstantRaw {
-        let kind = match self.kind {
-            ConstantKind::Number(n) => ConstantKind::Number(n),
-            ConstantKind::Identifier(i) => ConstantKind::Identifier(i),
-            ConstantKind::Parameter(p) => ConstantKind::Parameter(p),
-            ConstantKind::Boolean(b) => ConstantKind::Boolean(b),
+        let kind = match &self.kind {
+            ConstantKind::Number(n) => ConstantKind::Number(*n),
+            ConstantKind::Identifier(src) => ConstantKind::Identifier(src.clone()),
+            ConstantKind::Parameter(p) => ConstantKind::Parameter(*p),
+            ConstantKind::Boolean(b) => ConstantKind::Boolean(*b),
         };
 
         ConstantRaw {
@@ -214,21 +229,27 @@ impl ConstantCase {
     }
 }
 
-// impl Scope {
-//     fn set_type(&mut self, inner: Container<Type>) -> bool {
-//         if let Some(ref mut constant) = self.constant {
-//             constant.set_type(inner)
-//         } else {
-//             inner.get().size == 0
-//         }
-//     }
-// }
+impl ConstantUnary {
+    fn clone(&self) -> ConstantUnary {
+        ConstantUnary {
+            operator: self.operator.clone(),
+            constant: Container::new(self.constant.pointer()),
+        }
+    }
+}
+
+impl Type {
+    pub fn get_size(&self) -> Index {
+        self.size
+    }
+}
 
 impl Constant {
     fn set_type(&mut self, inner: Container<Type>) -> bool {
         match self {
             Constant::Binary(ref mut binary) => binary.set_type(inner),
             Constant::Case(case) => case.set_type(inner),
+            Constant::Unary(unary) => unary.constant.get().set_type(inner),
             Constant::Raw(ref mut raw) => {
                 if raw.inner.is_some() {
                     raw.inner.eql(&inner)
@@ -245,6 +266,21 @@ impl Constant {
             Constant::Raw(raw) => Container::new(raw.inner.pointer()),
             Constant::Case(case) => Container::new(case.inner.pointer()),
             Constant::Binary(binary) => Container::new(binary.inner.pointer()),
+            Constant::Unary(unary) => unary.constant.get().get_type(),
+        }
+    }
+
+    pub fn get_value(&self) -> Source {
+        match self {
+            Constant::Case(_) => todo!(),
+            Constant::Binary(_) => Source::Register(Register::Rbx),
+            Constant::Unary(_) => Source::Register(Register::Rbx),
+            Constant::Raw(raw) => match &raw.kind {
+                ConstantKind::Identifier(source) => source.clone(),
+                ConstantKind::Number(value) => Source::Immediate(Immediate(*value as usize)),
+                ConstantKind::Parameter(offset) => Source::Immediate(Immediate(*offset as usize)),
+                _ => panic!("Should not happen"),
+            },
         }
     }
 
@@ -253,6 +289,7 @@ impl Constant {
             Constant::Raw(raw) => Constant::Raw(raw.clone()),
             Constant::Binary(binary) => Constant::Binary(binary.clone()),
             Constant::Case(case) => Constant::Case(case.clone()),
+            Constant::Unary(unary) => Constant::Unary(unary.clone()),
         }
     }
 
@@ -264,6 +301,10 @@ impl Constant {
                 binary.right.get().deinit(arena);
                 arena.dealloc::<Constant>(2);
             }
+            Constant::Unary(unary) => {
+                unary.constant.get().deinit(arena);
+                arena.dealloc::<Constant>(1);
+            }
             Constant::Case(case) => {
                 for of in case.ofs.slice(0, case.len as usize) {
                     of.expression.deinit(arena);
@@ -272,12 +313,6 @@ impl Constant {
                 case.expression.get().deinit(arena);
             }
         }
-    }
-}
-
-impl Type {
-    pub fn get_size(&self) -> Index {
-        self.size
     }
 }
 
@@ -295,6 +330,7 @@ impl TypeChecker {
             procedures: RangeMap::new(10, &mut self_arena),
 
             variables: RangeMap::new(10, &mut self_arena),
+            variable_ranges: Vector::new(10, &mut self_arena),
 
             parameters: Vector::new(10, &mut self_arena),
             arguments: Vector::new(10, &mut self_arena),
@@ -346,9 +382,11 @@ impl TypeChecker {
         }));
     }
 
-    pub fn push_number(&mut self, range: Range) {
+    pub fn push_number(&mut self, range: Range, words: &Vector<u8>) {
+        let string = words.range(range);
+        let number = util::parse_string(string);
         self.push_constant(Constant::Raw(ConstantRaw {
-            kind: ConstantKind::Number(range),
+            kind: ConstantKind::Number(number),
             inner: Container::null(),
         }));
     }
@@ -362,7 +400,6 @@ impl TypeChecker {
         self.parameters.push(Container::new(inner.pointer()));
         self.register_variable(
             name_range,
-            0x00,
             Constant::Raw(ConstantRaw {
                 kind: ConstantKind::Parameter(self.parameters_size),
                 inner,
@@ -379,6 +416,8 @@ impl TypeChecker {
             signature: self.scope_count,
             constant: None,
             constant_count: 0,
+            variables: Buffer::new(self.variable_ranges.pointer(self.variable_ranges.len())),
+            variable_count: 0,
             inner: Container::null(),
         });
     }
@@ -395,6 +434,18 @@ impl TypeChecker {
         } else {
             None
         };
+
+        {
+            let count = self.last_scope.get().variable_count as usize;
+            let variables_to_reset = self.last_scope.get().variables.slice(0, count);
+
+            for v in variables_to_reset {
+                v.get().reset();
+            }
+
+            self.variable_ranges
+                .set_len(self.variable_ranges.len() - count as u32);
+        }
 
         self.last_scope = Container::new(self.last_scope.get().parent.pointer());
         if let Some(constant) = c {
@@ -506,13 +557,18 @@ impl TypeChecker {
             panic!("Could not set type of let declaration");
         }
 
-        let pointer = if let Constant::Raw(_) = constant {
-            0x00
+        if let Constant::Raw(_) = constant {
+            self.register_variable(name_range, constant, words);
         } else {
-            self.generator.bind_constant(&constant, words)
+            let pointer = self.generator.bind_constant(&constant, words);
+            let constant = Constant::Raw(ConstantRaw {
+                kind: ConstantKind::Identifier(Source::Memory(Register::Rbp, Immediate(pointer))),
+                inner,
+            });
+
+            self.register_variable(name_range, constant, words);
         };
 
-        self.register_variable(name_range, pointer, constant, words);
         self.arguments.clear();
     }
 
@@ -522,7 +578,6 @@ impl TypeChecker {
             panic!("Should not happen");
         };
 
-        // let argument_start = self.arguments.len();
         let len = procedure.get().len as usize;
 
         for i in 0..len {
@@ -536,7 +591,7 @@ impl TypeChecker {
             self.arguments.push(constant);
         }
 
-        let offset = self.generator.write_call(
+        self.generator.write_call(
             Buffer::new(self.arguments.pointer(0)),
             procedure.get().len,
             procedure.get().offset,
@@ -544,7 +599,7 @@ impl TypeChecker {
         );
 
         self.push_constant(Constant::Raw(ConstantRaw {
-            kind: ConstantKind::Identifier(offset),
+            kind: ConstantKind::Identifier(Source::Register(Register::Rax)),
             inner: Container::new(procedure.get().inner.pointer()),
         }));
 
@@ -556,6 +611,7 @@ impl TypeChecker {
         let start = self.fields.len();
 
         let mut size: Index = annotated_size as Index;
+        let mut align: Index = annotated_size as Index;
 
         for _ in 0..field_count {
             let field_type_range = self.ranges.pop();
@@ -563,6 +619,7 @@ impl TypeChecker {
             let inner = self.get_type(field_type_range, words);
 
             size += inner.get().size;
+            align = util::max(align as usize, inner.get().align as usize) as Index;
 
             self.fields.push(Field {
                 name: field_name_range,
@@ -576,6 +633,7 @@ impl TypeChecker {
                 fields: Buffer::new(self.fields.pointer(start)),
                 len: field_count as Index,
                 size,
+                align,
             },
             words,
         );
@@ -619,7 +677,13 @@ impl TypeChecker {
         }));
     }
 
-    pub fn push_unary(&mut self, op: BinaryOperator) {}
+    pub fn push_construct(&mut self, words: &Vector<u8>) {}
+
+    pub fn push_unary(&mut self, operator: UnaryOperator) {
+        let constant = self.arena.create(self.constants.pop());
+        self.constants
+            .push(Constant::Unary(ConstantUnary { operator, constant }))
+    }
 
     pub fn push_range(&mut self, range: Range) {
         self.ranges.push(range);
@@ -641,27 +705,27 @@ impl TypeChecker {
         }
     }
 
-    fn register_variable(
-        &mut self,
-        name_range: Range,
-        offset: Index,
-        constant: Constant,
-        words: &Vector<u8>,
-    ) {
-        self.variables.push(
+    fn register_variable(&mut self, name_range: Range, constant: Constant, words: &Vector<u8>) {
+        let index = self.variables.put(
             name_range,
             Variable {
                 signature: self.last_scope.get().signature,
-                offset,
                 constant,
             },
             words,
         );
+
+        self.variable_ranges.push(self.variables.key_addr_at(index));
+        self.last_scope.get().variable_count += 1;
     }
 
     pub fn deinit(&mut self, words: &Vector<u8>) {
         if let Some(main_procedure) = self.procedures.addr_of(b"main", words) {
-            self.generator.generate(main_procedure.get().offset);
+            if main_procedure.get().inner.get().get_size() != 4 {
+                panic!("program return value shoul be of size 4");
+            } else {
+                self.generator.generate(main_procedure.get().offset);
+            }
         } else {
             panic!("program entry point not found");
         }

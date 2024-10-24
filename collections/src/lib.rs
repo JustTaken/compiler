@@ -206,7 +206,7 @@ impl<T> RangeMap<T> {
         }
     }
 
-    pub fn push(&mut self, range: Range, item: T, buffer: &Vector<u8>) {
+    pub fn put(&mut self, range: Range, item: T, buffer: &Vector<u8>) -> u32 {
         let hash = util::hash(buffer.range(range));
 
         let mut code: u32 = hash % self.capacity;
@@ -224,6 +224,12 @@ impl<T> RangeMap<T> {
 
         self.value.set(item, code as usize);
         self.key.set(range, code as usize);
+
+        code
+    }
+
+    pub fn push(&mut self, range: Range, item: T, buffer: &Vector<u8>) {
+        self.put(range, item, buffer);
     }
 
     pub fn get(&self, range: Range, buffer: &Vector<u8>) -> Option<&T> {
@@ -265,8 +271,8 @@ impl<T> RangeMap<T> {
         }
     }
 
-    pub fn clear(&mut self) {
-        self.key.fill(self.capacity as usize, Range::default());
+    pub fn key_addr_at(&mut self, index: u32) -> Container<Range> {
+        Container::new(self.key.offset(index as usize))
     }
 }
 

@@ -17,6 +17,19 @@ impl Range {
             end: end as Index,
         }
     }
+
+    pub fn reset(&mut self) {
+        self.start = 0;
+        self.end = 0;
+    }
+}
+
+pub fn max(first: usize, second: usize) -> usize {
+    if first > second {
+        first
+    } else {
+        second
+    }
 }
 
 pub fn is_digit(c: u8) -> bool {
