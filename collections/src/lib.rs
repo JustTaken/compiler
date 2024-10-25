@@ -271,6 +271,10 @@ impl<T> RangeMap<T> {
         }
     }
 
+    pub fn value_addr_at(&mut self, index: u32) -> Container<T> {
+        Container::new(self.value.offset(index as usize))
+    }
+
     pub fn key_addr_at(&mut self, index: u32) -> Container<Range> {
         Container::new(self.key.offset(index as usize))
     }

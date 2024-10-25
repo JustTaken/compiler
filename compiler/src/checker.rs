@@ -107,6 +107,7 @@ pub struct TypeChecker {
 
     types: RangeMap<Type>,
     fields: Vector<Field>,
+    construct_fields: RangeMap<Constant>,
 
     procedures: RangeMap<Procedure>,
 
@@ -240,6 +241,21 @@ impl Type {
     pub fn get_size(&self) -> Index {
         self.size
     }
+
+    fn offset(&self, range: Range, words: &Vector<u8>) -> (Container<Type>, usize) {
+        let mut o: usize = 0;
+        let fields = self.fields.slice(0, self.len as usize);
+
+        for field in fields {
+            o += field.inner.get().size as usize;
+
+            if util::compare(words.range(field.name), words.range(range)) {
+                return (Container::new(field.inner.pointer()), o);
+            }
+        }
+
+        panic!("Should not happen");
+    }
 }
 
 impl Constant {
@@ -323,6 +339,7 @@ impl TypeChecker {
 
             types: RangeMap::new(10, &mut self_arena),
             fields: Vector::new(10, &mut self_arena),
+            construct_fields: RangeMap::new(10, &mut self_arena),
 
             procedures: RangeMap::new(10, &mut self_arena),
 
@@ -347,7 +364,37 @@ impl TypeChecker {
         self.constants.push(constant);
     }
 
-    pub fn pop_constant(&mut self) -> Constant {
+    fn get_type(&mut self, range: Range, words: &Vector<u8>) -> Container<Type> {
+        if let Some(t) = self.types.addr_of(words.range(range), words) {
+            t
+        } else {
+            panic!("Should not happen");
+        }
+    }
+
+    fn get_type_from_str(&mut self, type_name: &[u8], words: &Vector<u8>) -> Container<Type> {
+        if let Some(t) = self.types.addr_of(type_name, words) {
+            t
+        } else {
+            panic!("Should not happen");
+        }
+    }
+
+    fn register_variable(&mut self, name_range: Range, constant: Constant, words: &Vector<u8>) {
+        let index = self.variables.put(
+            name_range,
+            Variable {
+                signature: self.last_scope.get().signature,
+                constant,
+            },
+            words,
+        );
+
+        self.variable_ranges.push(self.variables.key_addr_at(index));
+        self.last_scope.get().variable_count += 1;
+    }
+
+    fn pop_constant(&mut self) -> Constant {
         self.last_scope.get().constant_count -= 1;
         self.constants.pop()
     }
@@ -366,6 +413,11 @@ impl TypeChecker {
                 s = &s.get().parent;
             }
         }
+
+        println!(
+            "varaible: {}",
+            std::str::from_utf8(words.range(range)).unwrap()
+        );
 
         panic!("undeclared variable");
     }
@@ -408,49 +460,6 @@ impl TypeChecker {
         );
 
         self.parameters_size += size;
-    }
-
-    pub fn start_scope(&mut self) {
-        self.last_scope = self.arena.create(Scope {
-            parent: Container::new(self.last_scope.pointer()),
-            signature: self.scope_count,
-            constant: None,
-            constant_count: 0,
-            variables: Buffer::new(self.variable_ranges.pointer(self.variable_ranges.len())),
-            variable_count: 0,
-            inner: Container::null(),
-        });
-    }
-
-    pub fn end_scope(&mut self) {
-        let constant_count = self.last_scope.get().constant_count;
-
-        if constant_count > 1 {
-            panic!("Should not have more than one constant value ranging");
-        }
-
-        let c = if constant_count > 0 {
-            Some(self.pop_constant())
-        } else {
-            None
-        };
-
-        {
-            let count = self.last_scope.get().variable_count as usize;
-            let variables_to_reset = self.last_scope.get().variables.slice(0, count);
-
-            for v in variables_to_reset {
-                v.get().reset();
-            }
-
-            self.variable_ranges
-                .set_len(self.variable_ranges.len() - count as u32);
-        }
-
-        self.last_scope = Container::new(self.last_scope.get().parent.pointer());
-        if let Some(constant) = c {
-            self.push_constant(constant);
-        }
     }
 
     pub fn push_procedure(&mut self, parameter_count: usize, words: &Vector<u8>) {
@@ -560,7 +569,7 @@ impl TypeChecker {
         if let Constant::Raw(_) = constant {
             self.register_variable(name_range, constant, words);
         } else {
-            let pointer = self.generator.bind_constant(&constant, words);
+            let pointer = self.generator.bind_constant(&constant);
             let constant = Constant::Raw(ConstantRaw {
                 kind: ConstantKind::Identifier(Source::Memory(Register::Rbp, Immediate(pointer))),
                 inner,
@@ -572,13 +581,15 @@ impl TypeChecker {
         self.arguments.clear();
     }
 
-    pub fn push_call(&mut self, words: &Vector<u8>) {
+    pub fn push_call(&mut self, len: usize, words: &Vector<u8>) {
         let name_range = self.ranges.pop();
         let Some(procedure) = self.procedures.addr_of(words.range(name_range), words) else {
             panic!("Should not happen");
         };
 
-        let len = procedure.get().len as usize;
+        if len != procedure.get().len as usize {
+            panic!("Passing the wrog number of arguments");
+        }
 
         for i in 0..len {
             let mut constant = self.pop_constant();
@@ -595,7 +606,6 @@ impl TypeChecker {
             Buffer::new(self.arguments.pointer(0)),
             procedure.get().len,
             procedure.get().offset,
-            words,
         );
 
         self.push_constant(Constant::Raw(ConstantRaw {
@@ -677,7 +687,67 @@ impl TypeChecker {
         }));
     }
 
-    pub fn push_construct(&mut self, words: &Vector<u8>) {}
+    pub fn push_construct(&mut self, len: usize, words: &Vector<u8>) {
+        let name_range = self.ranges.pop();
+        let typ = self.get_type(name_range, words);
+
+        if len != typ.get().len as usize {
+            panic!("Passing the wrogn number of arguments");
+        }
+
+        for _ in 0..len {
+            let constant = self.pop_constant();
+            let name = self.ranges.pop();
+
+            self.construct_fields.push(name, constant, words);
+        }
+
+        let offset = self.generator.pos();
+
+        for field in typ.get().fields.slice(0, typ.get().len as usize) {
+            if let Some(i) = self.construct_fields.index(words.range(field.name), words) {
+                let constant = self.construct_fields.value_addr_at(i);
+
+                constant
+                    .get()
+                    .set_type(Container::new(field.inner.pointer()));
+
+                self.generator.bind_constant(constant.get());
+                self.construct_fields.key_addr_at(i).get().reset();
+            } else {
+                panic!("Could not find field");
+            }
+        }
+
+        self.push_constant(Constant::Raw(ConstantRaw {
+            kind: ConstantKind::Identifier(Source::Memory(Register::Rbp, Immediate(offset))),
+            inner: Container::new(typ.pointer()),
+        }));
+    }
+
+    pub fn push_dot(&mut self, words: &Vector<u8>) {
+        let name_range = self.ranges.pop();
+        let constant = self.pop_constant();
+
+        let Constant::Raw(raw) = constant else {
+            panic!("Should not happen");
+        };
+
+        let ConstantKind::Identifier(Source::Memory(Register::Rbp, Immediate(offset))) = raw.kind
+        else {
+            panic!("Should not happen");
+        };
+
+        let (inner, relative_position) = raw.inner.get().offset(name_range, words);
+
+        self.push_constant(Constant::Raw(ConstantRaw {
+            kind: ConstantKind::Identifier(Source::Memory(
+                Register::Rbp,
+                Immediate((offset as isize - relative_position as isize) as usize),
+            )),
+            inner,
+        }))
+    }
 
     pub fn push_unary(&mut self, operator: UnaryOperator) {
         let constant = self.arena.create(self.constants.pop());
@@ -689,40 +759,55 @@ impl TypeChecker {
         self.ranges.push(range);
     }
 
-    fn get_type(&mut self, range: Range, words: &Vector<u8>) -> Container<Type> {
-        if let Some(t) = self.types.addr_of(words.range(range), words) {
-            t
-        } else {
-            panic!("Should not happen");
-        }
+    pub fn start_scope(&mut self) {
+        self.last_scope = self.arena.create(Scope {
+            parent: Container::new(self.last_scope.pointer()),
+            signature: self.scope_count,
+            constant: None,
+            constant_count: 0,
+            variables: Buffer::new(self.variable_ranges.pointer(self.variable_ranges.len())),
+            variable_count: 0,
+            inner: Container::null(),
+        });
     }
 
-    fn get_type_from_str(&mut self, type_name: &[u8], words: &Vector<u8>) -> Container<Type> {
-        if let Some(t) = self.types.addr_of(type_name, words) {
-            t
-        } else {
-            panic!("Should not happen");
+    pub fn end_scope(&mut self) {
+        let constant_count = self.last_scope.get().constant_count;
+
+        if constant_count > 1 {
+            panic!("Should not have more than one constant value ranging");
         }
-    }
 
-    fn register_variable(&mut self, name_range: Range, constant: Constant, words: &Vector<u8>) {
-        let index = self.variables.put(
-            name_range,
-            Variable {
-                signature: self.last_scope.get().signature,
-                constant,
-            },
-            words,
-        );
+        let c = if constant_count > 0 {
+            Some(self.pop_constant())
+        } else {
+            None
+        };
 
-        self.variable_ranges.push(self.variables.key_addr_at(index));
-        self.last_scope.get().variable_count += 1;
+        {
+            let count = self.last_scope.get().variable_count as usize;
+            let variables_to_reset = self.last_scope.get().variables.slice(0, count);
+
+            for v in variables_to_reset {
+                v.get().reset();
+            }
+
+            self.variable_ranges
+                .set_len(self.variable_ranges.len() - count as u32);
+        }
+
+        {
+            self.last_scope = Container::new(self.last_scope.get().parent.pointer());
+            if let Some(constant) = c {
+                self.push_constant(constant);
+            }
+        }
     }
 
     pub fn deinit(&mut self, words: &Vector<u8>) {
         if let Some(main_procedure) = self.procedures.addr_of(b"main", words) {
             if main_procedure.get().inner.get().get_size() != 4 {
-                panic!("program return value shoul be of size 4");
+                panic!("program return value should be of size 4");
             } else {
                 self.generator.generate(main_procedure.get().offset);
             }

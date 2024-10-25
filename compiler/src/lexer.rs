@@ -190,6 +190,7 @@ impl Token {
     pub const PARENTESISLEFT: Token = Token::Symbol(Symbol::ParentesisLeft);
     pub const PARENTESISRIGHT: Token = Token::Symbol(Symbol::ParentesisRight);
     pub const COMMA: Token = Token::Symbol(Symbol::Comma);
+    pub const DOT: Token = Token::Symbol(Symbol::Dot);
     pub const DOUBLECOLON: Token = Token::Symbol(Symbol::DoubleColon);
     pub const BRACELEFT: Token = Token::Symbol(Symbol::CurlyBraceLeft);
     pub const BRACERIGHT: Token = Token::Symbol(Symbol::CurlyBraceRight);

@@ -147,6 +147,15 @@ impl Operation {
                     buffer.extend(&[0x89, 0b01000000 + (rs.value() << 3) + rd.value()]);
                     imm.write(1, buffer);
                 }
+                (
+                    BinaryOperation::Mov,
+                    Destination::Memory(r, m_offset),
+                    Source::Immediate(imm),
+                ) => {
+                    buffer.extend(&[0xC7, 0b01000000 + r.value()]);
+                    m_offset.write(1, buffer);
+                    imm.write(4, buffer);
+                }
                 (BinaryOperation::Mov, Destination::Register(r), Source::Immediate(imm)) => {
                     buffer.push(0xB8 + r.value());
                     imm.write(4, buffer);
@@ -240,7 +249,7 @@ impl std::fmt::Debug for Destination {
             Destination::Register(r) => write!(f, "Destination::Register({:?})", r),
             Destination::Push => write!(f, "Destination::Push"),
             Destination::Memory(r, Immediate(i)) => {
-                write!(f, "Destination::Memory({:?}, {:#010x})", r, i)
+                write!(f, "Destination::Memory({:?}, Immediate({:#010x}))", r, i)
             }
         }
     }
@@ -251,7 +260,9 @@ impl std::fmt::Debug for Source {
         match self {
             Source::Register(r) => write!(f, "Source::Register({:?})", r),
             Source::Immediate(Immediate(n)) => write!(f, "Source::Immediate({:#010x})", n),
-            Source::Memory(r, Immediate(n)) => write!(f, "Source::Memory({:?}, {:#010x})", r, n),
+            Source::Memory(r, Immediate(n)) => {
+                write!(f, "Source::Memory({:?}, Immediate({:#010x}))", r, n)
+            }
             Source::Pop => write!(f, "Source::Pop"),
         }
     }
@@ -307,13 +318,12 @@ impl Generator {
         op: BinaryOperation,
         binary: &ConstantBinary,
         destination: &Destination,
-        words: &Vector<u8>,
     ) {
         let left = binary.get_left();
         let right = binary.get_right();
 
-        self.write_constant(op, &destination, left.get(), words);
-        self.write_constant(binary.op(), &destination, right.get(), words);
+        self.write_constant(op, &destination, left.get());
+        self.write_constant(binary.op(), &destination, right.get());
     }
 
     fn write_constant(
@@ -321,10 +331,9 @@ impl Generator {
         op: BinaryOperation,
         destination: &Destination,
         constant: &Constant,
-        words: &Vector<u8>,
     ) {
         match constant {
-            Constant::Binary(binary) => self.write_binary(op, &binary, destination, words),
+            Constant::Binary(binary) => self.write_binary(op, &binary, destination),
             Constant::Raw(_) => self.operations.push(Operation::Binary(
                 op,
                 destination.clone(),
@@ -334,44 +343,66 @@ impl Generator {
         }
     }
 
-    pub fn bind_constant(&mut self, constant: &Constant, words: &Vector<u8>) -> usize {
+    pub fn pos(&self) -> usize {
+        -(self.stack as isize) as usize
+    }
+
+    pub fn bind_constant(&mut self, constant: &Constant) -> usize {
         self.stack += constant.get_type().get().get_size();
-        self.write_constant(
-            BinaryOperation::Mov,
-            &Destination::Register(Register::Rbx),
-            constant,
-            words,
-        );
+        let offset = self.pos();
 
-        let offset = -(self.stack as isize) as usize;
+        if let Constant::Raw(_) = constant {
+            let value = constant.get_value();
 
-        self.operations.push(Operation::Binary(
-            BinaryOperation::Mov,
-            Destination::Memory(Register::Rbp, Immediate(offset)),
-            Source::Register(Register::Rbx),
-        ));
+            let source = if let Source::Memory(_, _) = value {
+                self.operations.push(Operation::Binary(
+                    BinaryOperation::Mov,
+                    Destination::Register(Register::Rbx),
+                    value,
+                ));
+
+                Source::Register(Register::Rbx)
+            } else {
+                value
+            };
+
+            self.operations.push(Operation::Binary(
+                BinaryOperation::Mov,
+                Destination::Memory(Register::Rbp, Immediate(offset)),
+                source,
+            ));
+        } else {
+            self.write_constant(
+                BinaryOperation::Mov,
+                &Destination::Register(Register::Rbx),
+                constant,
+            );
+
+            self.operations.push(Operation::Binary(
+                BinaryOperation::Mov,
+                Destination::Memory(Register::Rbp, Immediate(offset)),
+                Source::Register(Register::Rbx),
+            ));
+        }
 
         offset
     }
 
-    pub fn write_call(
-        &mut self,
-        args: Buffer<Constant>,
-        len: Index,
-        offset: Index,
-        words: &Vector<u8>,
-    ) {
+    pub fn write_call(&mut self, args: Buffer<Constant>, len: Index, offset: Index) {
         let arguments = args.slice(0, len as usize);
 
         for arg in arguments {
             if let Constant::Raw(_) = arg {
-                self.write_constant(BinaryOperation::Mov, &Destination::Push, arg, words);
+                self.operations.push(Operation::Binary(
+                    BinaryOperation::Mov,
+                    Destination::Push,
+                    arg.get_value(),
+                ));
             } else {
                 self.write_constant(
                     BinaryOperation::Mov,
                     &Destination::Register(Register::Rbx),
                     arg,
-                    words,
                 );
 
                 self.operations.push(Operation::Binary(

@@ -1,4 +1,5 @@
 use mem::Arena;
+use util::Range;
 
 use crate::checker::{BinaryOperator, TypeChecker, UnaryOperator};
 use crate::lexer::{Keyword, Lexer, Operator, Symbol, Token};
@@ -58,13 +59,11 @@ impl Rule {
 
     fn from_token(token: Token) -> Rule {
         match token {
-            Token::Symbol(symbol) => {
-                if let Symbol::ParentesisLeft = symbol {
-                    Rule::new(Some(grouping), None, Precedence::Assignment)
-                } else {
-                    Rule::new(None, None, Precedence::Nothing)
-                }
-            }
+            Token::Symbol(symbol) => match symbol {
+                Symbol::ParentesisLeft => Rule::new(Some(grouping), None, Precedence::Assignment),
+                Symbol::Dot => Rule::new(None, Some(dot), Precedence::Call),
+                _ => Rule::new(None, None, Precedence::Nothing),
+            },
             Token::Operator(operator) => match operator {
                 Operator::Minus => Rule::new(Some(unary), Some(binary), Precedence::Term),
                 Operator::Plus => Rule::new(None, Some(binary), Precedence::Term),
@@ -272,19 +271,28 @@ fn identifier(parser: &mut Parser) {
     };
 
     if parser.assert(Token::PARENTESISLEFT) {
-        call(parser);
-        parser.checker.push_range(range);
-        parser.checker.push_call(&parser.lexer.words);
+        call(parser, range);
     } else if parser.assert(Token::BRACELEFT) {
-        construct(parser);
-        parser.checker.push_range(range);
-        parser.checker.push_construct(&parser.lexer.words);
+        construct(parser, range);
     } else {
         parser.checker.push_identifier(range, &parser.lexer.words);
     }
 }
 
-fn construct(parser: &mut Parser) {
+fn dot(parser: &mut Parser) {
+    let Token::Identifier(range) = parser.current else {
+        panic!("Should not happen");
+    };
+
+    parser.advance();
+
+    parser.checker.push_range(range);
+    parser.checker.push_dot(&parser.lexer.words);
+}
+
+fn construct(parser: &mut Parser, range: Range) {
+    let mut count: usize = 0;
+
     while !parser.assert(Token::BRACERIGHT) {
         let Token::Identifier(range) = parser.current else {
             panic!("Should not happen");
@@ -297,7 +305,12 @@ fn construct(parser: &mut Parser) {
 
         parser.consume(Token::COMMA);
         parser.checker.push_range(range);
+
+        count += 1;
     }
+
+    parser.checker.push_range(range);
+    parser.checker.push_construct(count, &parser.lexer.words);
 }
 
 fn number(parser: &mut Parser) {
@@ -390,12 +403,17 @@ fn variable(parser: &mut Parser) {
     parser.checker.push_let(&parser.lexer.words);
 }
 
-fn call(parser: &mut Parser) {
+fn call(parser: &mut Parser, range: Range) {
+    let mut count: usize = 0;
+
     while !parser.assert(Token::PARENTESISRIGHT) {
         _ = parser.assert(Token::COMMA);
 
         expression(parser);
     }
+
+    parser.checker.push_range(range);
+    parser.checker.push_call(count, &parser.lexer.words);
 }
 
 fn case(parser: &mut Parser) {
