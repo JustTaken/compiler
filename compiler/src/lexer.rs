@@ -205,11 +205,11 @@ impl Token {
 }
 
 impl Lexer {
-    pub fn new(path: &str, arena: &mut Arena) -> Lexer {
+    pub fn new(path: String, arena: &mut Arena) -> Lexer {
         Lexer {
             words: Vector::new(1024, arena),
             content: Vector::new(1024, arena),
-            file: std::fs::File::open(path).unwrap(),
+            file: std::fs::File::open(path.as_str()).unwrap(),
             offset: 0,
             start: 0,
         }

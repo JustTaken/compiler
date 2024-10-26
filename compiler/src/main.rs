@@ -18,7 +18,7 @@ fn main() {
     let input_path = args.next().unwrap();
     let output_path = args.next().unwrap();
 
-    let mut parser = Parser::new(&input_path, &output_path, &mut arena);
+    let mut parser = Parser::new_parser(input_path, output_path, &mut arena);
 
     while parser.next() {}
 

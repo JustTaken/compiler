@@ -94,7 +94,7 @@ impl Rule {
 }
 
 impl Parser {
-    pub fn new(input: &str, output: &str, arena: &mut Arena) -> Parser {
+    pub fn new_parser(input: String, output: String, arena: &mut Arena) -> Parser {
         let mut lexer = Lexer::new(input, arena);
         let mut checker = TypeChecker::new(output, arena);
 

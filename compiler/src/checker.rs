@@ -1,4 +1,5 @@
-use crate::generator::{BinaryOperation, Generator, Immediate, Register, Source};
+use crate::generator::Generator;
+use crate::x86_64::{BinaryOperation, Immediate, Register, Source};
 use collections::{Buffer, RangeMap, Vector};
 use mem::{Arena, Container};
 use util::{Index, Range};
@@ -330,7 +331,7 @@ impl Constant {
 }
 
 impl TypeChecker {
-    pub fn new(path: &str, arena: &mut Arena) -> TypeChecker {
+    pub fn new(path: String, arena: &mut Arena) -> TypeChecker {
         let mut self_arena = Arena::new(arena.bytes(8196));
 
         TypeChecker {
