@@ -11,7 +11,7 @@ pub struct Generator {
     operations: Vector<Operation>,
     code_len: Index,
     stack: Index,
-    arena: Arena,
+    _arena: Arena,
     path: String,
 }
 
@@ -24,7 +24,7 @@ impl Generator {
             operations: Vector::new(50, &mut self_arena),
             code_len: 0,
             stack: 0,
-            arena: self_arena,
+            _arena: self_arena,
             path,
         }
     }

@@ -45,7 +45,7 @@ pub struct ConstantUnary {
 }
 
 struct Of {
-    matcher: ConstantRaw,
+    _matcher: ConstantRaw,
     expression: Constant,
 }
 
@@ -58,12 +58,12 @@ pub struct ConstantCase {
 
 pub struct Scope {
     parent: Container<Scope>,
-    constant: Option<Constant>,
+    _constant: Option<Constant>,
     constant_count: Index,
     signature: Index,
     variables: Buffer<Container<Range>>,
     variable_count: Index,
-    inner: Container<Type>,
+    _inner: Container<Type>,
 }
 
 pub enum Constant {
@@ -534,7 +534,7 @@ impl TypeChecker {
 
             self.ofs.push(Of {
                 expression,
-                matcher,
+                _matcher: matcher,
             });
         }
 
@@ -764,11 +764,11 @@ impl TypeChecker {
         self.last_scope = self.arena.create(Scope {
             parent: Container::new(self.last_scope.pointer()),
             signature: self.scope_count,
-            constant: None,
+            _constant: None,
             constant_count: 0,
             variables: Buffer::new(self.variable_ranges.pointer(self.variable_ranges.len())),
             variable_count: 0,
-            inner: Container::null(),
+            _inner: Container::null(),
         });
     }
 

@@ -9,15 +9,15 @@ use crate::lexer::{Keyword, Lexer, Operator, Symbol, Token};
 enum Precedence {
     Nothing,
     Assignment,
-    Or,
-    And,
+    _Or,
+    _And,
     Equality,
     Comparison,
     Term,
     Factor,
     Unary,
     Call,
-    Primary,
+    _Primary,
 }
 
 type Fn = fn(&mut Parser);
@@ -379,7 +379,7 @@ fn procedure(parser: &mut Parser) {
 fn variable(parser: &mut Parser) {
     parser.advance();
 
-    let mutable = parser.assert(Token::MUT);
+    let _mutable = parser.assert(Token::MUT);
     let Token::Identifier(iden) = parser.current else {
         panic!("Should not happen")
     };
@@ -410,6 +410,7 @@ fn call(parser: &mut Parser, range: Range) {
         _ = parser.assert(Token::COMMA);
 
         expression(parser);
+        count += 1;
     }
 
     parser.checker.push_range(range);
