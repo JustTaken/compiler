@@ -111,6 +111,7 @@ impl Parser {
     fn advance(&mut self) {
         self.previous = self.current;
         self.current = self.lexer.next();
+        println!("current: {:?}", self.current);
     }
 
     fn consume(&mut self, token: Token) {

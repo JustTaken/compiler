@@ -187,6 +187,7 @@ impl Token {
     }
 
     pub const IDEN: Token = Token::Identifier(Range { start: 0, end: 0 });
+    pub const NUMBER: Token = Token::Number(Range { start: 0, end: 0 });
     pub const PARENTESISLEFT: Token = Token::Symbol(Symbol::ParentesisLeft);
     pub const PARENTESISRIGHT: Token = Token::Symbol(Symbol::ParentesisRight);
     pub const COMMA: Token = Token::Symbol(Symbol::Comma);
@@ -197,11 +198,11 @@ impl Token {
     pub const EQUAL: Token = Token::Symbol(Symbol::Equal);
     pub const ARROW: Token = Token::Symbol(Symbol::Arrow);
     pub const SEMICOLON: Token = Token::Symbol(Symbol::Semicolon);
-    pub const EOF: Token = Token::Eof;
     pub const MUT: Token = Token::Keyword(Keyword::Mut);
     pub const OF: Token = Token::Keyword(Keyword::Of);
     pub const TRUE: Token = Token::Keyword(Keyword::True);
     pub const FALSE: Token = Token::Keyword(Keyword::False);
+    pub const EOF: Token = Token::Eof;
 }
 
 impl Lexer {
@@ -355,6 +356,109 @@ impl Lexer {
                 }
                 _ => todo!(),
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scan() {
+        let buffer = mem::allocate(3);
+        let mut arena = Arena::new(buffer);
+        let mut lexer = Lexer::new(String::from("../target/lang"), &mut arena);
+
+        let tokens = [
+            Token::Keyword(Keyword::Type),
+            Token::IDEN,
+            Token::NUMBER,
+            Token::SEMICOLON,
+            Token::Keyword(Keyword::Type),
+            Token::IDEN,
+            Token::NUMBER,
+            Token::SEMICOLON,
+            Token::Keyword(Keyword::Type),
+            Token::IDEN,
+            Token::BRACELEFT,
+            Token::IDEN,
+            Token::DOUBLECOLON,
+            Token::IDEN,
+            Token::COMMA,
+            Token::IDEN,
+            Token::DOUBLECOLON,
+            Token::IDEN,
+            Token::COMMA,
+            Token::IDEN,
+            Token::DOUBLECOLON,
+            Token::IDEN,
+            Token::COMMA,
+            Token::BRACERIGHT,
+            Token::Keyword(Keyword::Procedure),
+            Token::IDEN,
+            Token::PARENTESISLEFT,
+            Token::PARENTESISRIGHT,
+            Token::DOUBLECOLON,
+            Token::IDEN,
+            Token::BRACELEFT,
+            Token::Keyword(Keyword::Let),
+            Token::IDEN,
+            Token::DOUBLECOLON,
+            Token::IDEN,
+            Token::EQUAL,
+            Token::IDEN,
+            Token::BRACELEFT,
+            Token::IDEN,
+            Token::DOUBLECOLON,
+            Token::NUMBER,
+            Token::COMMA,
+            Token::IDEN,
+            Token::DOUBLECOLON,
+            Token::NUMBER,
+            Token::COMMA,
+            Token::IDEN,
+            Token::DOUBLECOLON,
+            Token::NUMBER,
+            Token::COMMA,
+            Token::BRACERIGHT,
+            Token::SEMICOLON,
+            Token::Keyword(Keyword::Let),
+            Token::IDEN,
+            Token::DOUBLECOLON,
+            Token::IDEN,
+            Token::EQUAL,
+            Token::IDEN,
+            Token::BRACELEFT,
+            Token::IDEN,
+            Token::DOUBLECOLON,
+            Token::IDEN,
+            Token::DOT,
+            Token::IDEN,
+            Token::COMMA,
+            Token::IDEN,
+            Token::DOUBLECOLON,
+            Token::IDEN,
+            Token::DOT,
+            Token::IDEN,
+            Token::COMMA,
+            Token::IDEN,
+            Token::DOUBLECOLON,
+            Token::IDEN,
+            Token::DOT,
+            Token::IDEN,
+            Token::COMMA,
+            Token::BRACERIGHT,
+            Token::SEMICOLON,
+            Token::IDEN,
+            Token::DOT,
+            Token::IDEN,
+            Token::BRACERIGHT,
+            Token::Eof,
+        ];
+
+        for token in tokens {
+            assert_eq!(token, lexer.next());
         }
     }
 }

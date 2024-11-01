@@ -7,6 +7,10 @@ fn main() {
     let start = std::time::Instant::now();
     let mut args = env::args();
 
+    if !std::env::consts::ARCH.eq("x86_64") {
+        panic!("Archtecture not supported");
+    }
+
     if args.len() != 3 {
         panic!("Program expect 2 arguments \"input path\" and \"output path\"");
     }

@@ -578,11 +578,10 @@ impl TypeChecker {
 
             self.register_variable(name_range, constant, words);
         };
-
-        self.arguments.clear();
     }
 
     pub fn push_call(&mut self, len: usize, words: &Vector<u8>) {
+        let start = self.arguments.len();
         let name_range = self.ranges.pop();
         let Some(procedure) = self.procedures.addr_of(words.range(name_range), words) else {
             panic!("Should not happen");
@@ -604,7 +603,7 @@ impl TypeChecker {
         }
 
         self.generator.write_call(
-            Buffer::new(self.arguments.pointer(0)),
+            Buffer::new(self.arguments.pointer(start)),
             procedure.get().len,
             procedure.get().offset,
         );
@@ -614,7 +613,7 @@ impl TypeChecker {
             inner: Container::new(procedure.get().inner.pointer()),
         }));
 
-        self.arguments.clear();
+        self.arguments.set_len(self.arguments.len() - len as u32);
     }
 
     pub fn push_type(&mut self, field_count: usize, annotated_size: usize, words: &Vector<u8>) {
