@@ -1,9 +1,11 @@
 use collections::Vector;
 
+pub const BASE_SIZE: usize = 4;
 pub struct Immediate(pub usize);
 
+#[repr(usize)]
 pub enum Register {
-    Rax,
+    Rax = 0,
     Rbx,
     Rcx,
     Rdi,
@@ -11,6 +13,11 @@ pub enum Register {
     Rsi,
     Rsp,
     Rbp,
+}
+
+pub struct RegisterManager {
+    registers: [Register; 8],
+    uses: [bool; 8],
 }
 
 pub enum Source {
@@ -51,13 +58,13 @@ impl Immediate {
         self.0
     }
 
-    fn clone(&self) -> Immediate {
+    pub fn clone(&self) -> Immediate {
         Immediate(self.0)
     }
 }
 
-impl Destination {
-    pub fn clone(&self) -> Destination {
+impl std::clone::Clone for Destination {
+    fn clone(&self) -> Destination {
         match self {
             Destination::Register(r) => Destination::Register(r.clone()),
             Destination::Memory(r, imm) => Destination::Memory(r.clone(), imm.clone()),
@@ -89,7 +96,7 @@ impl Operation {
                 }
                 (BinaryOperation::Mov, Destination::Push, Source::Immediate(imm)) => {
                     buffer.push(0x68);
-                    imm.write(4, buffer);
+                    imm.write(BASE_SIZE, buffer);
                 }
                 (BinaryOperation::Mov, Destination::Register(rd), Source::Register(rs)) => {
                     buffer.extend(&[0x48, 0x89, 0b11000000 + (rs.value() << 3) + rd.value()]);
@@ -97,6 +104,9 @@ impl Operation {
                 (BinaryOperation::Mov, Destination::Register(rd), Source::Memory(rs, imm)) => {
                     buffer.extend(&[0x8B, 0b01000000 + (rd.value() << 3) + rs.value()]);
                     imm.write(1, buffer);
+                }
+                (BinaryOperation::Mov, Destination::Register(r), Source::Pop) => {
+                    buffer.push(0x58 + r.value());
                 }
                 (BinaryOperation::Mov, Destination::Memory(rd, imm), Source::Register(rs)) => {
                     buffer.extend(&[0x89, 0b01000000 + (rs.value() << 3) + rd.value()]);
@@ -109,11 +119,11 @@ impl Operation {
                 ) => {
                     buffer.extend(&[0xC7, 0b01000000 + r.value()]);
                     m_offset.write(1, buffer);
-                    imm.write(4, buffer);
+                    imm.write(BASE_SIZE, buffer);
                 }
                 (BinaryOperation::Mov, Destination::Register(r), Source::Immediate(imm)) => {
                     buffer.push(0xB8 + r.value());
-                    imm.write(4, buffer);
+                    imm.write(BASE_SIZE, buffer);
                 }
                 (BinaryOperation::Add, Destination::Register(rd), Source::Register(rs)) => {
                     buffer.extend(&[0x01, 0b11000000 + (rs.value() << 3) + rd.value()])
@@ -172,14 +182,49 @@ impl Register {
     }
 }
 
-impl Source {
-    pub fn clone(&self) -> Source {
+impl std::clone::Clone for Source {
+    fn clone(&self) -> Source {
         match self {
             Source::Register(r) => Source::Register(r.clone()),
             Source::Memory(r, imm) => Source::Memory(r.clone(), imm.clone()),
             Source::Immediate(imm) => Source::Immediate(imm.clone()),
             Source::Pop => Source::Pop,
         }
+    }
+}
+
+impl RegisterManager {
+    pub fn new() -> RegisterManager {
+        RegisterManager {
+            registers: [
+                Register::Rax,
+                Register::Rbx,
+                Register::Rcx,
+                Register::Rdi,
+                Register::Rdx,
+                Register::Rsi,
+                Register::Rsp,
+                Register::Rbp,
+            ],
+            uses: [false; 8],
+        }
+    }
+
+    pub fn get(&mut self) -> Register {
+        for i in 0..self.registers.len() {
+            if !self.uses[i] {
+                self.uses[i] = true;
+
+                return self.registers[i].clone();
+            }
+        }
+
+        panic!("No unused register");
+    }
+
+    pub fn unuse(&mut self, register: Register) {
+        let index = register as usize;
+        self.uses[index] = false;
     }
 }
 

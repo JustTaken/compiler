@@ -111,7 +111,6 @@ impl Parser {
     fn advance(&mut self) {
         self.previous = self.current;
         self.current = self.lexer.next();
-        println!("current: {:?}", self.current);
     }
 
     fn consume(&mut self, token: Token) {
@@ -164,6 +163,7 @@ impl Parser {
     }
 
     pub fn deinit(&mut self) {
+        self.checker.end_scope();
         self.checker.deinit(&self.lexer.words);
     }
 }
@@ -292,7 +292,7 @@ fn dot(parser: &mut Parser) {
 }
 
 fn construct(parser: &mut Parser, range: Range) {
-    let mut count: usize = 0;
+    let mut count: u32 = 0;
 
     while !parser.assert(Token::BRACERIGHT) {
         let Token::Identifier(range) = parser.current else {
@@ -332,9 +332,8 @@ fn procedure(parser: &mut Parser) {
     parser.advance();
     parser.consume(Token::PARENTESISLEFT);
 
-    parser.checker.start_scope();
-
     let mut parameter_count: usize = 0;
+    let mut parameter_size: usize = 0;
 
     while !parser.assert(Token::PARENTESISRIGHT) {
         let Token::Identifier(param) = parser.current else {
@@ -354,7 +353,9 @@ fn procedure(parser: &mut Parser) {
 
         _ = parser.assert(Token::COMMA);
 
-        parser.checker.push_parameter(&parser.lexer.words);
+        parameter_size += parser
+            .checker
+            .push_parameter(parameter_size, &parser.lexer.words);
         parameter_count += 1;
     }
 
@@ -508,6 +509,8 @@ fn typ(parser: &mut Parser) {
 }
 
 fn scope(parser: &mut Parser) {
+    parser.checker.start_scope();
+
     while !parser.assert(Token::BRACERIGHT) {
         statement(parser);
     }
@@ -515,6 +518,6 @@ fn scope(parser: &mut Parser) {
     parser.checker.end_scope();
 }
 
-fn string(parser: &mut Parser) {
-    parser.advance();
+fn string(_parser: &mut Parser) {
+    todo!();
 }

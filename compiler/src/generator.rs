@@ -1,8 +1,10 @@
 use crate::checker::{Constant, ConstantBinary};
 use crate::elf::{self, ElfHeader, ProgramHeader};
-use crate::x86_64::{BinaryOperation, Destination, Immediate, Operation, Register, Source};
-use collections::{Buffer, Vector};
-use mem::Arena;
+use crate::x86_64::{
+    BinaryOperation, Destination, Immediate, Operation, Register, RegisterManager, Source,
+};
+use collections::Vector;
+use mem::{Arena, Container};
 use std::io::Write;
 use util::{Index, Range};
 
@@ -11,6 +13,7 @@ pub struct Generator {
     operations: Vector<Operation>,
     code_len: Index,
     stack: Index,
+    register_manager: RegisterManager,
     _arena: Arena,
     path: String,
 }
@@ -24,6 +27,7 @@ impl Generator {
             operations: Vector::new(50, &mut self_arena),
             code_len: 0,
             stack: 0,
+            register_manager: RegisterManager::new(),
             _arena: self_arena,
             path,
         }
@@ -35,7 +39,7 @@ impl Generator {
         });
     }
 
-    fn write_binary(
+    fn evaluate_binary(
         &mut self,
         op: BinaryOperation,
         binary: &ConstantBinary,
@@ -44,133 +48,122 @@ impl Generator {
         let left = binary.get_left();
         let right = binary.get_right();
 
-        self.write_constant(op, &destination, left.get());
-        self.write_constant(binary.op(), &destination, right.get());
+        self.evaluate_constant(op, left.get(), &destination);
+        self.evaluate_constant(binary.op(), right.get(), &destination);
     }
 
-    fn write_constant(
+    fn evaluate_constant(
         &mut self,
         op: BinaryOperation,
-        destination: &Destination,
         constant: &Constant,
+        destination: &Destination,
     ) {
         match constant {
-            Constant::Binary(binary) => self.write_binary(op, &binary, destination),
-            Constant::Raw(_) => self.operations.push(Operation::Binary(
+            Constant::Binary(binary) => self.evaluate_binary(op, binary.get(), destination),
+            Constant::Ref(c) => self.evaluate_constant(op, c.get(), destination),
+            Constant::Call(call) => {
+                let len = call.get().len();
+                let mut size = 0;
+
+                for i in 0..len {
+                    let arg = call.get().arg(i);
+                    size += arg.get_type().get().get_size();
+
+                    self.evaluate_expression(arg);
+
+                    self.operations.push(Operation::Binary(
+                        BinaryOperation::Mov,
+                        Destination::Push,
+                        arg.get_source().unwrap(),
+                    ));
+                }
+
+                self.operations
+                    .push(Operation::Call(Immediate(call.get().offset())));
+
+                self.operations.push(Operation::Binary(
+                    BinaryOperation::Add,
+                    Destination::Register(Register::Rbx),
+                    Source::Register(Register::Rbp),
+                ));
+            }
+            Constant::Raw(raw) => self.operations.push(Operation::Binary(
                 op,
                 destination.clone(),
-                constant.get_value(),
+                raw.get().source(),
             )),
             _ => {}
         }
     }
 
-    pub fn pos(&self) -> usize {
-        -(self.stack as isize) as usize
-    }
+    fn evaluate_expression(&mut self, constant: &mut Constant) {
+        if let Some(_) = constant.get_source() {
+        } else {
+            let size = constant.get_type().get().get_size();
 
-    pub fn bind_constant(&mut self, constant: &Constant) -> usize {
-        self.stack += constant.get_type().get().get_size();
-        let offset = self.pos();
+            let (source, destination) = if size > 8 {
+                let register = Register::Rbp;
+                let offset = Immediate(self.pos());
 
-        if let Constant::Raw(_) = constant {
-            let value = constant.get_value();
+                self.stack += size;
 
-            let source = if let Source::Memory(_, _) = value {
-                self.operations.push(Operation::Binary(
-                    BinaryOperation::Mov,
-                    Destination::Register(Register::Rbx),
-                    value,
-                ));
-
-                Source::Register(Register::Rbx)
+                (
+                    Source::Memory(register.clone(), offset.clone()),
+                    Destination::Memory(register, offset),
+                )
             } else {
-                value
+                let register = self.register_manager.get();
+                (
+                    Source::Register(register.clone()),
+                    Destination::Register(register),
+                )
             };
 
-            self.operations.push(Operation::Binary(
-                BinaryOperation::Mov,
-                Destination::Memory(Register::Rbp, Immediate(offset)),
-                source,
-            ));
-        } else {
-            self.write_constant(
-                BinaryOperation::Mov,
-                &Destination::Register(Register::Rbx),
-                constant,
-            );
+            constant.set_source(source);
 
-            self.operations.push(Operation::Binary(
-                BinaryOperation::Mov,
-                Destination::Memory(Register::Rbp, Immediate(offset)),
-                Source::Register(Register::Rbx),
-            ));
+            self.evaluate_constant(BinaryOperation::Mov, constant, &destination);
         }
-
-        offset
     }
 
-    pub fn write_call(&mut self, args: Buffer<Constant>, len: Index, offset: Index) {
-        let arguments = args.slice(0, len as usize);
-
-        for arg in arguments {
-            if let Constant::Raw(_) = arg {
-                self.operations.push(Operation::Binary(
-                    BinaryOperation::Mov,
-                    Destination::Push,
-                    arg.get_value(),
-                ));
-            } else {
-                self.write_constant(
-                    BinaryOperation::Mov,
-                    &Destination::Register(Register::Rbx),
-                    arg,
-                );
-
-                self.operations.push(Operation::Binary(
-                    BinaryOperation::Mov,
-                    Destination::Push,
-                    Source::Register(Register::Rbx),
-                ));
-            }
-        }
-
-        self.operations
-            .push(Operation::Call(Immediate(offset as usize)));
-    }
-
-    pub fn write_procedure(&mut self, constant: Option<&Constant>) -> Index {
+    pub fn write_procedure(&mut self, constant: Container<Constant>) -> Index {
         let non_zero_stack = self.stack != 0;
+        Operation::Binary(
+            BinaryOperation::Mov,
+            Destination::Register(Register::Rbp),
+            Source::Register(Register::Rsp),
+        )
+        .write(&mut self.buffer);
 
         if non_zero_stack {
-            let procedure_stack_init = &[
-                Operation::Binary(
-                    BinaryOperation::Mov,
-                    Destination::Register(Register::Rbp),
-                    Source::Register(Register::Rsp),
-                ),
-                Operation::Binary(
-                    BinaryOperation::Sub,
-                    Destination::Register(Register::Rsp),
-                    Source::Immediate(Immediate(self.stack as usize)),
-                ),
-            ];
-
-            for op in procedure_stack_init {
-                op.write(&mut self.buffer);
-            }
+            Operation::Binary(
+                BinaryOperation::Sub,
+                Destination::Register(Register::Rsp),
+                Source::Immediate(Immediate(self.stack as usize)),
+            )
+            .write(&mut self.buffer);
         }
 
-        if let Some(c) = constant {
-            let source = c.get_value();
+        if constant.is_some() {
+            self.evaluate_expression(constant.get());
+            let source = constant.get().get_source().unwrap();
 
-            if let Source::Register(Register::Rax) = source {
+            if let Source::Register(r) = source.clone() {
+                if let Register::Rax = r {
+                } else {
+                    self.operations.push(Operation::Binary(
+                        BinaryOperation::Mov,
+                        Destination::Register(Register::Rax),
+                        source.clone(),
+                    ));
+                }
+
+                self.register_manager.unuse(r);
             } else {
                 self.operations.push(Operation::Binary(
                     BinaryOperation::Mov,
                     Destination::Register(Register::Rax),
-                    source,
-                ))
+                    source.clone(),
+                ));
             }
         }
 
@@ -190,11 +183,15 @@ impl Generator {
 
         let code_len = self.code_len;
 
+        self.operations.clear();
         self.code_len = self.buffer.len() as Index;
         self.stack = 0;
-        self.operations.clear();
 
         code_len
+    }
+
+    pub fn pos(&self) -> usize {
+        -(self.stack as isize) as usize
     }
 
     pub fn generate(&mut self, main_procedure_offset: Index) {

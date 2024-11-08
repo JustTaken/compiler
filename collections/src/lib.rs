@@ -66,7 +66,7 @@ impl<T> Buffer<T> {
         unsafe { std::ptr::copy(from, self.ptr.add(start), len) };
     }
 
-    pub fn offset(&mut self, o: usize) -> *mut T {
+    pub fn offset(&self, o: usize) -> *mut T {
         unsafe { self.ptr.add(o) }
     }
 
