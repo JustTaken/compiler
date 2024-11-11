@@ -14,6 +14,7 @@ const Operation = generator.Operation;
 const BinaryOperation = generator.BinaryOperation;
 const BinaryOperationKind = generator.BinaryKind;
 const Destination = generator.Destination;
+const DestinationKind = generator.DestinationKind;
 const Source = generator.Source;
 const Memory = generator.Memory;
 const Register = generator.Register;
@@ -261,7 +262,8 @@ const Constant = union(ConstantKind) {
         };
     }
 
-    fn evaluate(self: Constant, operation: BinaryOperationKind, destination: ?Destination, gen: *Generator, lead: bool) void {
+    fn evaluate(self: Constant, operation: BinaryOperationKind, dst: ?Destination, gen: *Generator, lead: bool) void {
+        const destination = dst orelse @panic("TODO");
         if (lead) {
             self.usage_count(.Remove);
         }
@@ -271,17 +273,37 @@ const Constant = union(ConstantKind) {
                 gen.operations.push(Operation{ .Binary = BinaryOperation{
                     .kind = operation,
                     .source = Source{ .Immediate = number.value },
-                    .destination = destination orelse @panic("Should not happen"),
+                    .destination = destination,
                 } });
             },
-            .Binary => |binary| {
-                const dst = destination orelse @panic("Should not happen");
+            .Parameter => |parameter| {
+                gen.operations.push(Operation{ .Binary = BinaryOperation{
+                    .kind = operation,
+                    .source = Source{ .Memory = .{ .register = .Rbp, .offset = parameter.offset } },
+                    .destination = destination,
+                } });
+            },
+            .Call => |call| {
+                for (call.arguments.offset(0)) |argument| {
+                    argument.evaluate(.Mov, Destination{ .Stack = {} }, gen, false);
+                }
 
+                gen.operations.push(Operation{ .Call = call.procedure.offset });
+
+                if (@as(DestinationKind, destination) == .Register and destination.Register == Register.Rax) {} else {
+                    gen.operations.push(Operation{ .Binary = BinaryOperation{
+                        .kind = operation,
+                        .source = Source{ .Register = .Rax },
+                        .destination = destination,
+                    } });
+                }
+            },
+            .Binary => |binary| {
                 if (binary.source) |source| {
                     gen.operations.push(Operation{ .Binary = BinaryOperation{
                         .kind = operation,
                         .source = source,
-                        .destination = dst,
+                        .destination = destination,
                     } });
 
                     if (binary.usage == 0) {
@@ -289,18 +311,16 @@ const Constant = union(ConstantKind) {
                         binary.source = null;
                     }
                 } else {
-                    binary.left.evaluate(operation, dst, gen, false);
-                    binary.right.evaluate(binary.operator.to_gen_operation(), dst, gen, false);
+                    binary.left.evaluate(operation, destination, gen, false);
+                    binary.right.evaluate(binary.operator.to_gen_operation(), destination, gen, false);
                 }
             },
             .Unary => |unary| {
-                const dst = destination orelse @panic("Should not happen");
-
                 if (unary.source) |source| {
                     gen.operations.push(Operation{ .Binary = BinaryOperation{
                         .kind = operation,
                         .source = source,
-                        .destination = dst,
+                        .destination = destination,
                     } });
 
                     if (unary.usage == 0) {
@@ -308,7 +328,7 @@ const Constant = union(ConstantKind) {
                         unary.source = null;
                     }
                 } else {
-                    unary.constant.evaluate(operation, dst, gen, false);
+                    unary.constant.evaluate(operation, destination, gen, false);
                 }
             },
             .Scope => |scope| {
@@ -325,20 +345,18 @@ const Constant = union(ConstantKind) {
                 scope.used = true;
             },
             .Ref => |constant| {
-                const dst = destination orelse @panic("Should not happen");
-
                 if (constant.get_source()) |_| {
-                    constant.evaluate(operation, dst, gen, lead);
+                    constant.evaluate(operation, destination, gen, lead);
                 } else {
                     if (lead) {
-                        constant.evaluate(operation, dst, gen, lead);
-                        constant.set_source(dst.as_source());
+                        constant.evaluate(operation, destination, gen, lead);
+                        constant.set_source(destination.as_source());
                     } else {
                         const register = gen.manager.get();
 
                         constant.evaluate(BinaryOperationKind.Mov, Destination{ .Register = register }, gen, false);
                         constant.set_source(Source{ .Register = register });
-                        constant.evaluate(operation, dst, gen, lead);
+                        constant.evaluate(operation, destination, gen, lead);
                     }
                 }
 
@@ -349,7 +367,6 @@ const Constant = union(ConstantKind) {
                     constant.set_source(null);
                 }
             },
-            else => @panic("Should not happen"),
         }
     }
 
@@ -543,8 +560,9 @@ pub const TypeChecker = struct {
 
     pub fn push_call(self: *TypeChecker, argument_count: u32, words: *const String) void {
         const range = self.ranges.pop();
+        const name = words.range(range);
 
-        if (self.procedures.get(words.range(range), words)) |procedure| {
+        if (self.procedures.get(name, words)) |procedure| {
             if (procedure.parameters.len != argument_count) {
                 @panic("Should not happen");
             }
@@ -567,6 +585,7 @@ pub const TypeChecker = struct {
                 .usage = 0,
             }) });
         } else {
+            util.print("{s}\n", .{name});
             @panic("Procedure not found");
         }
     }
@@ -635,6 +654,8 @@ pub const TypeChecker = struct {
         const offset: usize = 0;
 
         if (self.constants.len != 1) @panic("Should not happen");
+
+        self.generator.operations.clear();
 
         var constant = self.constants.pop();
         if (!constant.set_type(inner)) @panic("Should not happen");

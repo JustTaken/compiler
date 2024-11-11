@@ -8,7 +8,7 @@ const Vec = collections.Vec;
 const Stream = collections.Stream;
 const String = collections.String;
 
-pub const Register = enum(u8) {
+pub const Register = enum {
     Rax,
     Rcx,
     Rdx,

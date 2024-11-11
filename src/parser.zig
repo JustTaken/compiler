@@ -365,7 +365,7 @@ pub const Parser = struct {
     }
 };
 
-test "parsing" {
+test "basic" {
     const generator = @import("generator.zig");
     const buffer = mem.malloc(2);
     defer mem.free(buffer);
@@ -392,6 +392,45 @@ test "parsing" {
         try util.assert(operations[node].len == parser.checker.generator.operations.len);
 
         for (parser.checker.generator.operations.offset(0), 0..) |operation, i| {
+            try util.assert(operation.equal(operations[node][i]));
+        }
+
+        node += 1;
+    }
+
+    parser.deinit();
+}
+
+test "function call " {
+    const generator = @import("generator.zig");
+    const buffer = mem.malloc(2);
+    defer mem.free(buffer);
+
+    var arena = mem.Arena.new(buffer);
+    var parser = Parser.new("zig-out/call.lang", "zig-out/out", &arena);
+
+    const operations: []const []const generator.Operation = &.{ &.{}, &.{}, &.{
+        .{ .Binary = .{
+            .kind = .Mov,
+            .destination = .{ .Register = .Rax },
+            .source = .{ .Memory = .{ .register = .Rbp, .offset = 0 } },
+        } },
+    }, &.{
+        .{ .Binary = .{
+            .kind = .Mov,
+            .destination = .{ .Stack = {} },
+            .source = .{ .Immediate = 10 },
+        } },
+        .{ .Call = 0 },
+    } };
+
+    var node: usize = 0;
+
+    while (parser.next()) {
+        try util.assert(operations[node].len == parser.checker.generator.operations.len);
+
+        for (parser.checker.generator.operations.offset(0), 0..) |operation, i| {
+            // util.print("Expected: {}\n got: {}\n", .{ operations[node][i], operation });
             try util.assert(operation.equal(operations[node][i]));
         }
 
