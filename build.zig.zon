@@ -1,0 +1,27 @@
+.{
+    .name = "compiler",
+    .version = "0.0.1",
+    .minimum_zig_version = "0.13.0",
+
+    .dependencies = .{
+        .collections = .{
+            .path = "collections",
+            .lazy = false,
+        },
+        .mem = .{
+            .path = "mem",
+            .lazy = false,
+        },
+        .util = .{
+            .path = "util",
+            .lazy = false,
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
+

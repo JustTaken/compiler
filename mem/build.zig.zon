@@ -1,0 +1,17 @@
+.{
+    .name = "mem",
+    .version = "0.0.1",
+
+    .dependencies = .{
+        .util = .{
+            .path = "../util",
+            .lazy = false,
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
