@@ -177,16 +177,6 @@ pub fn Vec(T: type) type {
             return Range.new(start, self.len);
         }
 
-        pub fn eql(self: *const Self, other: Self) bool {
-            if (self.len != other.len) return false;
-
-            for (0..self.len) |i| {
-                if (self.items[i] != other.items[i]) return false;
-            }
-
-            return true;
-        }
-
         pub fn get(self: *const Self, index: u32) *T {
             if (index >= self.len) @panic("Vec does not have enough size");
 

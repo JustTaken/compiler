@@ -229,9 +229,9 @@ const Constant = union(ConstantKind) {
 
     fn set_source(self: Constant, source: ?Source) void {
         switch (self) {
-            .Parameter => @panic("Should not happen"),
-            .Number => @panic("Should not happen"),
-            .Call => @panic("Should not happen"),
+            .Parameter => {},
+            .Number => {},
+            .Call => {},
             .Binary => |binary| binary.source = source,
             .Scope => |scope| {
                 if (scope.return_value) |*constant| {

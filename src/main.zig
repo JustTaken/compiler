@@ -30,5 +30,5 @@ pub fn main() !void {
 }
 
 test "main test" {
-    std.testing.refAllDecls(@This());
+    _ = @import("parser.zig");
 }

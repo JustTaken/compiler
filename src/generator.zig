@@ -174,6 +174,43 @@ pub const Operation = union(OperationKind) {
             },
         }
     }
+
+    pub fn equal(self: Operation, other: Operation) bool {
+        if (@as(OperationKind, self) != @as(OperationKind, other)) return false;
+
+        switch (self) {
+            .Syscall, .Ret => return true,
+            .Call => return self.Call == other.Call,
+            .Binary => {
+                if (@as(BinaryKind, self.Binary.kind) != @as(BinaryKind, other.Binary.kind)) return false;
+                if (@as(DestinationKind, self.Binary.destination) != @as(DestinationKind, other.Binary.destination)) return false;
+                if (@as(SourceKind, self.Binary.source) != @as(SourceKind, other.Binary.source)) return false;
+
+                switch (self.Binary.destination) {
+                    .Register => return self.Binary.destination.Register == other.Binary.destination.Register,
+                    .Memory => {
+                        const self_memory = self.Binary.destination.Memory;
+                        const other_memory = other.Binary.destination.Memory;
+
+                        return self_memory.offset == other_memory.offset and self_memory.register == other_memory.register;
+                    },
+                    .Stack => return true,
+                }
+
+                switch (self.Binary.source) {
+                    .Register => return self.Binary.source.Register == other.Binary.source.Register,
+                    .Memory => {
+                        const self_memory = self.Binary.source.Memory;
+                        const other_memory = other.Binary.source.Memory;
+
+                        return self_memory.offset == other_memory.offset and self_memory.register == other_memory.register;
+                    },
+                    .Immediate => self.Binary.source.Immediate == other.Binary.source.Immediate,
+                    .Stack => return true,
+                }
+            },
+        }
+    }
 };
 
 const RegisterManager = struct {
@@ -197,10 +234,6 @@ const RegisterManager = struct {
     }
 
     pub fn get(self: *RegisterManager) Register {
-        if (true) {
-            // @panic("testing");
-        }
-
         const r = self.free.pop();
         self.used.push(r);
 
@@ -246,10 +279,6 @@ pub const Generator = struct {
     }
 
     pub fn deinit(self: *Generator) void {
-        for (self.operations.offset(0)) |operation| {
-            util.print("{}\n", .{operation});
-        }
-
         self.stream.close();
     }
 };

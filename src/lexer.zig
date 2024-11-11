@@ -93,6 +93,7 @@ pub const Token = union(TokenKind) {
     pub const BRACERIGHT: Token = Token{ .Symbol = Symbol.CurlyBraceRight };
     pub const EQUAL: Token = Token{ .Symbol = Symbol.Equal };
     pub const ARROW: Token = Token{ .Symbol = Symbol.Arrow };
+    pub const PLUS: Token = Token{ .Operator = Operator.Plus };
     pub const SEMICOLON: Token = Token{ .Symbol = Symbol.Semicolon };
     pub const TYPE: Token = Token{ .Keyword = Keyword.Type };
     pub const PROC: Token = Token{ .Keyword = Keyword.Procedure };
@@ -319,20 +320,19 @@ pub const Lexer = struct {
 };
 
 test "lexer" {
-    const std = @import("std");
-
     const buffer = mem.malloc(1);
     var arena = Arena.new(buffer);
 
     var file = try collections.File.open("zig-out/basic.lang");
     const stream = file.stream();
 
-    const tokens: []const Token = &.{ Token.TYPE, Token.IDEN, Token.EQUAL, Token.NUMBER, Token.SEMICOLON, Token.TYPE, Token.IDEN, Token.EQUAL, Token.NUMBER, Token.SEMICOLON, Token.PROC, Token.IDEN, Token.PARENTESISLEFT, Token.PARENTESISRIGHT, Token.DOUBLECOLON, Token.IDEN, Token.BRACELEFT, Token.LET, Token.IDEN, Token.DOUBLECOLON, Token.IDEN, Token.EQUAL, Token.NUMBER, Token.SEMICOLON, Token.IDEN, Token.BRACERIGHT, Token.EOF };
+    const tokens: []const Token = &.{ Token.TYPE, Token.IDEN, Token.EQUAL, Token.NUMBER, Token.SEMICOLON, Token.TYPE, Token.IDEN, Token.EQUAL, Token.NUMBER, Token.SEMICOLON, Token.PROC, Token.IDEN, Token.PARENTESISLEFT, Token.PARENTESISRIGHT, Token.DOUBLECOLON, Token.IDEN, Token.BRACELEFT, Token.LET, Token.IDEN, Token.DOUBLECOLON, Token.IDEN, Token.EQUAL, Token.NUMBER, Token.PLUS, Token.NUMBER, Token.SEMICOLON, Token.IDEN, Token.BRACERIGHT, Token.EOF };
 
     var lexer = Lexer.new(stream, &arena);
 
     for (tokens) |token| {
-        try std.testing.expect(lexer.current.eql(token));
+        try util.assert(lexer.current.eql(token));
+
         lexer.advance();
     }
 }
