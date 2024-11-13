@@ -25,6 +25,7 @@ const Precedence = enum(usize) {
     Term,
     Factor,
     Unary,
+    Property,
     Call,
     Primary,
 };
@@ -49,6 +50,7 @@ const Rule = struct {
             .Symbol => |symbol| switch (symbol) {
                 .ParentesisLeft => new(Parser.grouping, null, .Assignment),
                 .CurlyBraceLeft => new(Parser.scope, null, .Assignment),
+                .Dot => new(null, Parser.property, .Property),
                 else => new(null, null, .Nothing),
             },
             .Operator => |operator| switch (operator) {
@@ -65,7 +67,7 @@ const Rule = struct {
             .Number => new(Parser.number, null, .Nothing),
             .Identifier => new(Parser.identifier, null, .Nothing),
             .String => new(Parser.string, null, .Nothing),
-            else => new(null, null, .Nothing),
+            .Eof => @panic("Should not happen"),
         };
     }
 };
@@ -73,10 +75,10 @@ const Rule = struct {
 pub const Parser = struct {
     lexer: Lexer,
     checker: TypeChecker,
-    arena: Arena,
+    arena: *Arena,
 
     pub fn new(input: []const u8, output: []const u8, allocator: *Arena) Parser {
-        var arena = Arena.new(allocator.bytes(2 * mem.PAGE_SIZE));
+        var arena = allocator.child(mem.PAGE_SIZE * 2);
 
         var input_file = arena.create(File, File.open(input) catch @panic("File not found"));
         var output_file = arena.create(File, File.create(output) catch @panic("File not found"));
@@ -85,8 +87,8 @@ pub const Parser = struct {
         const output_stream = output_file.stream();
 
         return Parser{
-            .lexer = Lexer.new(input_stream, &arena),
-            .checker = TypeChecker.new(output_stream, &arena),
+            .lexer = Lexer.new(input_stream, arena),
+            .checker = TypeChecker.new(output_stream, arena),
             .arena = arena,
         };
     }
@@ -153,7 +155,9 @@ pub const Parser = struct {
 
         if (self.lexer.match(Token.PARENTESISLEFT)) {
             self.call();
-        } else if (self.lexer.match(Token.BRACELEFT)) {} else {
+        } else if (self.lexer.match(Token.BRACELEFT)) {
+            self.construct();
+        } else {
             self.checker.push_identifier(&self.lexer.words);
         }
     }
@@ -162,6 +166,25 @@ pub const Parser = struct {
         const range = self.lexer.previous.Number;
 
         self.checker.push_number(range, &self.lexer.words);
+    }
+
+    fn construct(self: *Parser) void {
+        var field_count: u32 = 0;
+
+        while (!self.lexer.match(Token.BRACERIGHT)) {
+            const name = self.lexer.current;
+
+            self.lexer.consume(Token.IDEN);
+            self.lexer.consume(Token.DOUBLECOLON);
+
+            self.expression();
+            self.lexer.consume(Token.COMMA);
+
+            self.checker.ranges.push(name.Identifier);
+            field_count += 1;
+        }
+
+        self.checker.push_construct(field_count, &self.lexer.words);
     }
 
     fn call(self: *Parser) void {
@@ -219,6 +242,13 @@ pub const Parser = struct {
         self.checker.push_type(field_count, size, &self.lexer.words);
     }
 
+    fn property(self: *Parser) void {
+        const name = self.lexer.current;
+        self.lexer.consume(Token.IDEN);
+
+        self.checker.push_property(name.Identifier, &self.lexer.words);
+    }
+
     fn procedure(self: *Parser) void {
         self.lexer.advance();
 
@@ -229,6 +259,7 @@ pub const Parser = struct {
 
         var parameters_size: u32 = 0;
         var parameter_count: u32 = 0;
+        const variable_count: u32 = self.checker.variable_constants.len;
 
         while (!self.lexer.match(Token.PARENTESISRIGHT)) {
             if (!self.lexer.match(Token.COMMA)) {
@@ -258,9 +289,9 @@ pub const Parser = struct {
         self.lexer.consume(Token.IDEN);
         self.lexer.consume(Token.BRACELEFT);
         self.scope();
-        self.checker.ranges.extend(&.{ name.Identifier, return_type.Identifier });
 
-        self.checker.push_procedure(parameter_count, &self.lexer.words);
+        self.checker.ranges.extend(&.{ name.Identifier, return_type.Identifier });
+        self.checker.push_procedure(parameter_count, variable_count, &self.lexer.words);
     }
 
     fn let(self: *Parser) void {
@@ -288,27 +319,33 @@ pub const Parser = struct {
 
     fn string(self: *Parser) void {
         self.lexer.advance();
+        @panic("TODO");
     }
 
     fn scope(self: *Parser) void {
         var expression_count: u32 = 0;
+        var declaration_count: u32 = 0;
         var has_return = false;
 
         while (!self.lexer.match(Token.BRACERIGHT)) {
             switch (self.lexer.current) {
                 Token.Keyword => |keyword| switch (keyword) {
-                    Keyword.Let => self.let(),
+                    Keyword.Let => {
+                        self.let();
+                        declaration_count += 1;
+                    },
                     else => @panic("Here we do not accept this kind of statement"),
                 },
 
                 else => {
                     self.expression();
 
-                    if (!self.lexer.match(Token.SEMICOLON)) {
-                        self.lexer.consume(Token.BRACERIGHT);
-                        has_return = true;
+                    if (!self.lexer.previous.eql(Token.SEMICOLON)) {
+                        if (self.lexer.match(Token.BRACERIGHT)) {
+                            has_return = true;
 
-                        break;
+                            break;
+                        }
                     }
 
                     expression_count += 1;
@@ -316,7 +353,7 @@ pub const Parser = struct {
             }
         }
 
-        self.checker.push_scope(expression_count, has_return);
+        self.checker.push_scope(expression_count, declaration_count, has_return);
     }
 
     fn parse(self: *Parser, precedence: Precedence) void {
@@ -359,9 +396,10 @@ pub const Parser = struct {
     }
 
     pub fn deinit(self: *Parser) void {
-        self.checker.deinit();
         self.lexer.deinit();
+        self.checker.deinit();
         self.arena.destroy(File, 2);
+        self.arena.deinit("Parser");
     }
 };
 
@@ -383,6 +421,52 @@ test "basic" {
             .kind = .Add,
             .destination = .{ .Register = .Rax },
             .source = .{ .Immediate = 10 },
+        } },
+    } };
+
+    var node: usize = 0;
+
+    while (parser.next()) {
+        try util.assert(operations[node].len == parser.checker.generator.operations.len);
+
+        for (parser.checker.generator.operations.offset(0), 0..) |operation, i| {
+            try util.assert(operation.equal(operations[node][i]));
+        }
+
+        node += 1;
+    }
+
+    parser.deinit();
+}
+
+test "binary operation" {
+    const generator = @import("generator.zig");
+    const buffer = mem.malloc(2);
+    defer mem.free(buffer);
+
+    var arena = mem.Arena.new(buffer);
+    var parser = Parser.new("zig-out/binary.lang", "zig-out/out", &arena);
+
+    const operations: []const []const generator.Operation = &.{ &.{}, &.{}, &.{
+        .{ .Binary = .{
+            .kind = .Mov,
+            .destination = .{ .Register = .Rdi },
+            .source = .{ .Immediate = 10 },
+        } },
+        .{ .Binary = .{
+            .kind = .Add,
+            .destination = .{ .Register = .Rdi },
+            .source = .{ .Immediate = 10 },
+        } },
+        .{ .Binary = .{
+            .kind = .Mov,
+            .destination = .{ .Register = .Rax },
+            .source = .{ .Register = .Rdi },
+        } },
+        .{ .Binary = .{
+            .kind = .Add,
+            .destination = .{ .Register = .Rax },
+            .source = .{ .Register = .Rdi },
         } },
     } };
 
@@ -430,7 +514,6 @@ test "function call " {
         try util.assert(operations[node].len == parser.checker.generator.operations.len);
 
         for (parser.checker.generator.operations.offset(0), 0..) |operation, i| {
-            // util.print("Expected: {}\n got: {}\n", .{ operations[node][i], operation });
             try util.assert(operation.equal(operations[node][i]));
         }
 

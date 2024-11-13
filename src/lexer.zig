@@ -146,8 +146,11 @@ pub const Lexer = struct {
     start: u32,
 
     stream: Stream,
+    arena: *Arena,
 
-    pub fn new(stream: Stream, arena: *Arena) Lexer {
+    pub fn new(stream: Stream, allocator: *Arena) Lexer {
+        const arena = allocator.child(mem.PAGE_SIZE >> 1);
+
         var self = Lexer{
             .words = String.new(1024, arena),
             .content = String.new(1024, arena),
@@ -156,6 +159,7 @@ pub const Lexer = struct {
             .current = Token.EOF,
             .offset = 0,
             .start = 0,
+            .arena = arena,
         };
 
         self.advance();
@@ -314,8 +318,11 @@ pub const Lexer = struct {
         }
     }
 
-    pub fn deinit(self: *const Lexer) void {
+    pub fn deinit(self: *Lexer) void {
         self.stream.close();
+        self.content.deinit(self.arena);
+        self.words.deinit(self.arena);
+        self.arena.deinit("Lexer");
     }
 };
 

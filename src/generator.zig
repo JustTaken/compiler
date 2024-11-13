@@ -1,14 +1,17 @@
 const collections = @import("collections");
 const mem = @import("mem");
 const util = @import("util");
+const elf = @import("elf.zig");
 
 const Arena = mem.Arena;
 
 const Vec = collections.Vec;
 const Stream = collections.Stream;
 const String = collections.String;
+const ProgramHeader = elf.ProgramHeader;
+const ElfHeader = elf.Header;
 
-pub const Register = enum {
+pub const Register = enum(u8) {
     Rax,
     Rcx,
     Rdx,
@@ -18,7 +21,7 @@ pub const Register = enum {
     Rsi,
     Rdi,
 
-    fn value(self: Register) usize {
+    fn value(self: Register) u8 {
         return @intFromEnum(self);
     }
 };
@@ -26,11 +29,12 @@ pub const Register = enum {
 const Immediate = usize;
 const Offset = usize;
 
-fn to_bytes(int: usize) []const u8 {
-    const bytes: [8]u8 = undefined;
+fn to_bytes(int: usize) [8]u8 {
+    var bytes: [8]u8 = undefined;
 
     for (0..8) |i| {
-        bytes[i] = @truncate(int >> (8 * i));
+        const u: u6 = @intCast(i * 8);
+        bytes[i] = @truncate(int >> u);
     }
 
     return bytes;
@@ -250,6 +254,11 @@ const RegisterManager = struct {
             }
         }
     }
+
+    fn deinit(self: *RegisterManager, arena: *Arena) void {
+        self.free.deinit(arena);
+        self.used.deinit(arena);
+    }
 };
 
 pub const Generator = struct {
@@ -258,16 +267,16 @@ pub const Generator = struct {
     operations: Vec(Operation),
     manager: RegisterManager,
 
-    arena: Arena,
+    arena: *Arena,
 
     pub fn new(stream: Stream, allocator: *Arena) Generator {
-        var arena = Arena.new(allocator.bytes(2048));
+        const arena = allocator.child(mem.PAGE_SIZE >> 1);
 
         return Generator{
             .stream = stream,
-            .buffer = String.new(512, &arena),
-            .operations = Vec(Operation).new(16, &arena),
-            .manager = RegisterManager.new(&arena),
+            .buffer = String.new(512, arena),
+            .operations = Vec(Operation).new(16, arena),
+            .manager = RegisterManager.new(arena),
             .arena = arena,
         };
     }
@@ -278,7 +287,58 @@ pub const Generator = struct {
         }
     }
 
+    pub fn check(self: Generator) void {
+        if (self.manager.used.len > 0) @panic("Should not happen");
+
+        util.print("------------------------------------\n", .{});
+
+        for (self.operations.offset(0)) |operation| {
+            util.print("{}\n", .{operation});
+        }
+
+        util.print("------------------------------------\n", .{});
+    }
+
+    pub fn generate(self: *Generator) void {
+        self.buffer.clear();
+
+        const program_end = [_]Operation{
+            Operation{ .Call = 0x00 },
+            Operation{ .Binary = BinaryOperation{
+                .kind = .Mov,
+                .source = Source{ .Register = Register.Rax },
+                .destination = Destination{ .Register = Register.Rdi },
+            } },
+            Operation{ .Binary = BinaryOperation{
+                .kind = .Mov,
+                .destination = Destination{ .Register = Register.Rax },
+                .source = Source{ .Immediate = 0x3C },
+            } },
+            Operation{ .Syscall = {} },
+        };
+
+        for (program_end) |operation| {
+            operation.write(&self.buffer);
+        }
+
+        const elf_header = ElfHeader.new(.Exec, 1);
+        const program_header = ProgramHeader.new(.Load, &.{
+            .Readable,
+            .Executable,
+        }, self.buffer.len);
+
+        self.buffer.extend(mem.as_bytes(ElfHeader, &elf_header));
+        self.buffer.extend(mem.as_bytes(ProgramHeader, &program_header));
+    }
+
     pub fn deinit(self: *Generator) void {
+        self.generate();
         self.stream.close();
+
+        self.manager.deinit(self.arena);
+        self.operations.deinit(self.arena);
+        self.buffer.deinit(self.arena);
+
+        self.arena.deinit("Generator");
     }
 };

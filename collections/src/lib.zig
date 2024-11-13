@@ -120,6 +120,10 @@ pub fn Array(T: type) type {
 
             return self.items[o..self.len];
         }
+
+        pub fn deinit(self: *const Self, arena: *Arena) void {
+            arena.destroy(T, self.len);
+        }
     };
 }
 
@@ -226,6 +230,10 @@ pub fn Vec(T: type) type {
         pub fn clear(self: *Self) void {
             self.len = 0;
         }
+
+        pub fn deinit(self: *const Self, arena: *Arena) void {
+            arena.destroy(T, self.capacity);
+        }
     };
 }
 
@@ -295,8 +303,9 @@ pub fn RangeMap(T: type) type {
             return null;
         }
 
-        pub fn clear(self: *Self) void {
-            @memset(self.key[0..self.capacity], Range.new(0, 0));
+        pub fn deinit(self: *const Self, arena: *Arena) void {
+            arena.destroy(T, self.capacity);
+            arena.destroy(Range, self.capacity);
         }
     };
 }

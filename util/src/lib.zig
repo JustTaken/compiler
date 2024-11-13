@@ -1,7 +1,11 @@
 const std = @import("std");
 
+pub var debug_mode = false;
+
 pub fn print(comptime fmt: []const u8, args: anytype) void {
-    std.debug.print(fmt, args);
+    if (debug_mode) {
+        std.debug.print(fmt, args);
+    }
 }
 
 pub fn convert(input: [*:0]u8) []const u8 {

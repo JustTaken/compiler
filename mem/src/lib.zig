@@ -1,7 +1,7 @@
 const std = @import("std");
 const util = @import("util");
 
-pub const PAGE_SIZE: usize = std.mem.page_size;
+pub const PAGE_SIZE: u32 = std.mem.page_size;
 
 pub fn malloc(pages: usize) []u8 {
     const buffer = std.posix.mmap(
@@ -16,7 +16,7 @@ pub fn malloc(pages: usize) []u8 {
     return @alignCast(buffer);
 }
 
-pub fn free(memory: []const u8) void {
+pub fn mfree(memory: []const u8) void {
     const ptr: []align(PAGE_SIZE) const u8 = @alignCast(memory);
     std.posix.munmap(ptr);
 }
@@ -42,28 +42,46 @@ pub fn equal(T: type, one: []const T, two: []const T) bool {
     return true;
 }
 
+pub fn as_bytes(T: type, ptr: *const T) []const u8 {
+    const buffer: [*]const u8 = @ptrCast(ptr);
+    const size = @sizeOf(T);
+
+    return buffer[0..size];
+}
+
 pub const Arena = struct {
     ptr: *anyopaque,
-    used: u32,
+    usage: u32,
+    max_usage: u32,
     capacity: u32,
 
-    pub fn new(buffer: []u8) Arena {
+    parent: ?*Arena,
+
+    pub fn new(pages: u32) Arena {
+        const buffer = malloc(pages);
+
         return .{
-            .ptr = @ptrCast(buffer.ptr),
+            .ptr = buffer.ptr,
             .capacity = @intCast(buffer.len),
-            .used = 0,
+            .usage = 0,
+            .max_usage = 0,
+            .parent = null,
         };
     }
 
-    pub fn bytes(self: *Arena, size: u32) []u8 {
-        if (self.used + size > self.capacity) @panic("Arena do not have enough size");
+    pub fn child(self: *Arena, size: u32) *Arena {
+        const buffer = self.alloc(u8, size);
 
-        const ptr: [*]u8 = @ptrCast(self.ptr);
-        const buffer = ptr[self.used .. self.used + size];
-
-        self.used += size;
-
-        return buffer;
+        return self.create(
+            Arena,
+            Arena{
+                .ptr = buffer,
+                .capacity = size,
+                .parent = self,
+                .max_usage = 0,
+                .usage = 0,
+            },
+        );
     }
 
     pub fn alloc(self: *Arena, T: type, size: u32) [*]T {
@@ -73,17 +91,21 @@ pub const Arena = struct {
 
         const lenght = @sizeOf(T) * size;
 
-        if (lenght + self.used > self.capacity) @panic("Arena do not have enhough size");
+        if (lenght + self.usage > self.capacity) {
+            util.print("{}:{}/{}\n", .{ lenght, self.usage, self.capacity });
 
-        var ptr: usize = @intFromPtr(self.ptr) + self.used;
-        self.used += lenght;
+            @panic("Arena do not have enhough size");
+        }
+
+        var ptr: usize = @intFromPtr(self.ptr) + self.usage;
+        self.usage += lenght;
 
         const alig = @alignOf(T);
         const rest = ptr % alig;
 
         if (rest > 0) {
             const offset: u32 = @intCast(alig - rest);
-            self.used += offset;
+            self.usage += offset;
             ptr += offset;
         }
 
@@ -100,6 +122,26 @@ pub const Arena = struct {
     pub fn destroy(self: *Arena, T: type, count: u32) void {
         const len: u32 = @intCast(@sizeOf(T));
 
-        self.used -= len * count;
+        self.max_usage = util.max(self.usage, self.max_usage);
+        const size = len * count;
+
+        if (size > self.usage) {
+            util.print("out of lengh: {}, {} {}\n", .{ size, self.capacity, self.usage });
+        }
+
+        self.usage -= size;
+    }
+
+    pub fn deinit(self: *Arena, name: []const u8) void {
+        if (self.parent) |arena| {
+            arena.destroy(u8, self.capacity);
+            arena.destroy(Arena, 1);
+        } else {
+            const buffer: [*]u8 = @ptrCast(self.ptr);
+            mfree(buffer[0..self.capacity]);
+        }
+
+        self.max_usage = util.max(self.usage, self.max_usage);
+        util.print("{s}: ({}:{})/{}\n", .{ name, self.usage, self.max_usage, self.capacity });
     }
 };

@@ -25,7 +25,7 @@ const ConstantBinary = struct {
     operator: Operator,
     left: Constant,
     right: Constant,
-    inner: ?*const Type,
+    inner: ?*const ConstantType,
     source: ?Source,
     usage: usize,
 
@@ -58,7 +58,7 @@ const ConstantBinary = struct {
 
 const ConstantUnary = struct {
     operator: Operator,
-    constant: *Constant,
+    constant: Constant,
     source: ?Source,
     usage: usize,
 
@@ -69,20 +69,21 @@ const ConstantUnary = struct {
 };
 
 const ConstantCall = struct {
-    procedure: *const Procedure,
+    procedure: *const ConstantProcedure,
     arguments: Array(Constant),
+    source: ?Source,
     usage: usize,
 };
 
 const ConstantParameter = struct {
     offset: usize,
-    inner: *const Type,
+    inner: *const ConstantType,
     usage: usize,
 };
 
 const ConstantNumber = struct {
     value: usize,
-    inner: ?*const Type,
+    inner: ?*const ConstantType,
     usage: usize,
 };
 
@@ -92,7 +93,7 @@ const ConstantScope = struct {
     usage: usize,
     used: bool,
 
-    fn set_type(self: ConstantScope, inner: *const Type) bool {
+    fn set_type(self: ConstantScope, inner: *const ConstantType) bool {
         if (self.return_value) |constant| {
             return constant.set_type(inner);
         } else {
@@ -100,7 +101,7 @@ const ConstantScope = struct {
         }
     }
 
-    fn get_type(self: ConstantScope) ?*const Type {
+    fn get_type(self: ConstantScope) ?*const ConstantType {
         if (self.return_value) |constant| {
             return constant.get_type();
         } else {
@@ -108,6 +109,14 @@ const ConstantScope = struct {
         }
     }
 };
+
+const ConstantConstruct = struct {
+    inner: *const ConstantType,
+    constants: Array(Constant),
+    source: ?Source,
+    usage: usize,
+};
+
 const ConstantUsageModification = enum(usize) {
     Remove,
     Add,
@@ -120,14 +129,36 @@ const ConstantUsageModification = enum(usize) {
     }
 };
 
+const ConstantType = struct {
+    size: u32,
+    alignment: u32,
+    fields: Array(Field),
+    usage: usize,
+
+    const Field = struct {
+        name: Range,
+        inner: *ConstantType,
+    };
+};
+
+const ConstantProcedure = struct {
+    offset: usize,
+    inner: *ConstantType,
+    parameters: Array(*const ConstantType),
+    usage: usize,
+};
+
 const ConstantKind = enum {
     Number,
     Parameter,
     Call,
     Binary,
     Unary,
+    Construct,
     Ref,
     Scope,
+    Procedure,
+    Type,
 };
 
 const Constant = union(ConstantKind) {
@@ -136,15 +167,20 @@ const Constant = union(ConstantKind) {
     Call: *ConstantCall,
     Binary: *ConstantBinary,
     Unary: *ConstantUnary,
+    Construct: *ConstantConstruct,
     Ref: *Constant,
     Scope: *ConstantScope,
+    Procedure: *ConstantProcedure,
+    Type: *ConstantType,
 
-    fn set_type(self: Constant, inner: *const Type) bool {
+    fn set_type(self: Constant, inner: *const ConstantType) bool {
         switch (self) {
+            .Procedure, .Type => @panic("Why?"),
             .Parameter => |parameter| return parameter.inner == inner,
             .Call => |call| return call.procedure.inner == inner,
             .Unary => |unary| return unary.constant.set_type(inner),
             .Ref => |constant| return constant.set_type(inner),
+            .Construct => |construct| return construct.inner == inner,
             .Binary => |binary| {
                 if (binary.inner) |typ| {
                     return typ == inner;
@@ -165,10 +201,12 @@ const Constant = union(ConstantKind) {
         return true;
     }
 
-    fn get_type(self: Constant) ?*const Type {
+    fn get_type(self: Constant) ?*const ConstantType {
         return switch (self) {
+            .Procedure, .Type => @panic("Why?"),
             .Parameter => |parameter| parameter.inner,
             .Call => |call| call.procedure.inner,
+            .Construct => |construct| construct.inner,
             .Unary => |unary| unary.constant.get_type(),
             .Ref => |constant| constant.get_type(),
             .Binary => |binary| binary.inner,
@@ -181,36 +219,57 @@ const Constant = union(ConstantKind) {
         switch (self) {
             .Number => |number| number.usage = mod.apply(number.usage),
             .Parameter => |parameter| parameter.usage = mod.apply(parameter.usage),
+            .Procedure => |procedure| procedure.usage = mod.apply(procedure.usage),
+            .Type => |typ| typ.usage = mod.apply(typ.usage),
             .Unary => |unary| {
-                unary.constant.usage_count(mod);
                 unary.usage = mod.apply(unary.usage);
+
+                if (mod == .Add) {
+                    unary.constant.usage_count(mod);
+                }
             },
             .Binary => |binary| {
-                binary.left.usage_count(mod);
-                binary.right.usage_count(mod);
                 binary.usage = mod.apply(binary.usage);
+
+                if (mod == .Add) {
+                    binary.left.usage_count(mod);
+                    binary.right.usage_count(mod);
+                }
             },
             .Call => |call| {
-                for (call.arguments.offset(0)) |*arg| {
-                    arg.usage_count(mod);
-                }
-
                 call.usage = mod.apply(call.usage);
+
+                if (mod == .Add) {
+                    for (call.arguments.offset(0)) |*arg| {
+                        arg.usage_count(mod);
+                    }
+                }
             },
             .Scope => |scope| {
-                if (scope.return_value) |constant| {
-                    constant.usage_count(mod);
-                }
-
-                for (scope.constants.offset(0)) |constant| {
-                    constant.usage_count(mod);
-                }
-
                 scope.usage = mod.apply(scope.usage);
+
+                if (mod == .Add) {
+                    if (scope.return_value) |constant| {
+                        constant.usage_count(mod);
+                    }
+
+                    for (scope.constants.offset(0)) |constant| {
+                        constant.usage_count(mod);
+                    }
+                }
+            },
+            .Construct => |construct| {
+                construct.usage = mod.apply(construct.usage);
+
+                if (mod == .Add) {
+                    for (construct.constants.offset(0)) |constant| {
+                        constant.usage_count(mod);
+                    }
+                }
             },
             .Ref => |constant| {
                 if (mod == .Add) {
-                    constant.usage_count(.Add);
+                    constant.usage_count(mod);
                 }
             },
         }
@@ -220,19 +279,23 @@ const Constant = union(ConstantKind) {
         return switch (self) {
             .Parameter => |parameter| parameter.usage,
             .Binary => |binary| binary.usage,
+            .Procedure => |procedure| procedure.usage,
+            .Type => |typ| typ.usage,
             .Scope => |scope| scope.usage,
             .Number => |number| number.usage,
             .Unary => |unary| unary.usage,
             .Call => |call| call.usage,
+            .Construct => |construct| construct.usage,
             .Ref => |ref| ref.get_usage(),
         };
     }
 
     fn set_source(self: Constant, source: ?Source) void {
         switch (self) {
-            .Parameter => {},
-            .Number => {},
-            .Call => {},
+            .Procedure, .Type => @panic("What???"),
+            .Parameter, .Number => {},
+            .Call => |call| call.source = source,
+            .Construct => |construct| construct.source = source,
             .Binary => |binary| binary.source = source,
             .Scope => |scope| {
                 if (scope.return_value) |*constant| {
@@ -246,9 +309,11 @@ const Constant = union(ConstantKind) {
 
     fn get_source(self: Constant) ?Source {
         return switch (self) {
+            .Procedure, .Type => @panic("Why?"),
             .Parameter => |parameter| Source{ .Memory = Memory{ .register = Register.Rbp, .offset = parameter.offset } },
             .Number => |number| Source{ .Immediate = number.value },
-            .Call => Source{ .Register = Register.Rax },
+            .Call => |call| call.source,
+            .Construct => |construct| construct.source,
             .Binary => |binary| binary.source,
             .Scope => |scope| blk: {
                 if (scope.return_value) |constant| {
@@ -262,73 +327,69 @@ const Constant = union(ConstantKind) {
         };
     }
 
-    fn evaluate(self: Constant, operation: BinaryOperationKind, dst: ?Destination, gen: *Generator, lead: bool) void {
-        const destination = dst orelse @panic("TODO");
-        if (lead) {
+    fn evaluate(self: Constant, operation: BinaryOperationKind, destination: ?Destination, gen: *Generator, change_count: bool) void {
+        if (change_count) {
             self.usage_count(.Remove);
         }
 
         switch (self) {
+            .Procedure, .Type => @panic("What?"),
             .Number => |number| {
                 gen.operations.push(Operation{ .Binary = BinaryOperation{
                     .kind = operation,
                     .source = Source{ .Immediate = number.value },
-                    .destination = destination,
+                    .destination = destination orelse @panic("Should not happen"),
                 } });
             },
             .Parameter => |parameter| {
                 gen.operations.push(Operation{ .Binary = BinaryOperation{
                     .kind = operation,
                     .source = Source{ .Memory = .{ .register = .Rbp, .offset = parameter.offset } },
-                    .destination = destination,
+                    .destination = destination orelse @panic("Should not happen"),
                 } });
             },
             .Call => |call| {
                 for (call.arguments.offset(0)) |argument| {
-                    argument.evaluate(.Mov, Destination{ .Stack = {} }, gen, false);
+                    argument.evaluate(.Mov, Destination{ .Stack = {} }, gen, change_count);
                 }
 
                 gen.operations.push(Operation{ .Call = call.procedure.offset });
 
-                if (@as(DestinationKind, destination) == .Register and destination.Register == Register.Rax) {} else {
-                    gen.operations.push(Operation{ .Binary = BinaryOperation{
-                        .kind = operation,
-                        .source = Source{ .Register = .Rax },
-                        .destination = destination,
-                    } });
+                if (destination) |dst| {
+                    if (@as(DestinationKind, dst) == .Register and dst.Register == Register.Rax) {} else {
+                        gen.operations.push(Operation{ .Binary = BinaryOperation{
+                            .kind = operation,
+                            .source = Source{ .Register = .Rax },
+                            .destination = dst,
+                        } });
+                    }
                 }
             },
             .Binary => |binary| {
+                const dst = destination orelse @panic("SHould not happen");
+
                 if (binary.source) |source| {
                     gen.operations.push(Operation{ .Binary = BinaryOperation{
                         .kind = operation,
                         .source = source,
-                        .destination = destination,
+                        .destination = dst,
                     } });
-
-                    if (binary.usage == 0) {
-                        gen.give_back(source);
-                        binary.source = null;
-                    }
                 } else {
-                    binary.left.evaluate(operation, destination, gen, false);
-                    binary.right.evaluate(binary.operator.to_gen_operation(), destination, gen, false);
+                    binary.left.evaluate(operation, dst, gen, change_count);
+                    binary.right.evaluate(binary.operator.to_gen_operation(), dst, gen, change_count);
                 }
             },
             .Unary => |unary| {
+                const dst = destination orelse @panic("SHould not happen");
+
                 if (unary.source) |source| {
                     gen.operations.push(Operation{ .Binary = BinaryOperation{
                         .kind = operation,
                         .source = source,
-                        .destination = destination,
+                        .destination = dst,
                     } });
-
-                    if (unary.usage == 0) {
-                        gen.give_back(source);
-                        unary.source = null;
-                    }
                 } else {
-                    unary.constant.evaluate(operation, destination, gen, false);
+                    unary.constant.evaluate(operation, dst, gen, change_count);
                 }
             },
             .Scope => |scope| {
@@ -339,32 +400,30 @@ const Constant = union(ConstantKind) {
                 }
 
                 if (scope.return_value) |constant| {
-                    constant.evaluate(operation, destination, gen, lead);
+                    constant.evaluate(operation, destination orelse @panic("Should not happen"), gen, change_count);
                 }
 
                 scope.used = true;
             },
+            .Construct => @panic("TODO"),
             .Ref => |constant| {
-                if (constant.get_source()) |_| {
-                    constant.evaluate(operation, destination, gen, lead);
-                } else {
-                    if (lead) {
-                        constant.evaluate(operation, destination, gen, lead);
-                        constant.set_source(destination.as_source());
-                    } else {
-                        const register = gen.manager.get();
+                const dst = destination orelse @panic("Should not happen");
 
-                        constant.evaluate(BinaryOperationKind.Mov, Destination{ .Register = register }, gen, false);
-                        constant.set_source(Source{ .Register = register });
-                        constant.evaluate(operation, destination, gen, lead);
+                if (constant.get_source()) |source| {
+                    constant.evaluate(operation, dst, gen, change_count);
+
+                    if (constant.get_usage() == 0) {
+                        gen.give_back(source);
+                        constant.set_source(null);
                     }
-                }
+                } else if (constant.get_usage() > 1) {
+                    const register = gen.manager.get();
 
-                if (constant.get_usage() == 0) {
-                    const source = constant.get_source().?;
-
-                    gen.give_back(source);
-                    constant.set_source(null);
+                    constant.evaluate(BinaryOperationKind.Mov, Destination{ .Register = register }, gen, change_count);
+                    constant.set_source(Source{ .Register = register });
+                    constant.evaluate(operation, dst, gen, false);
+                } else {
+                    constant.evaluate(operation, dst, gen, change_count);
                 }
             },
         }
@@ -377,7 +436,7 @@ const Constant = union(ConstantKind) {
             .Number => arena.destroy(ConstantNumber, 1),
             .Call => |call| {
                 arena.destroy(ConstantCall, 1);
-                arena.destroy(Constant, call.arguments.len);
+                call.arguments.deinit(arena);
 
                 for (call.arguments.offset(0)) |argument| {
                     argument.deinit(arena);
@@ -385,13 +444,28 @@ const Constant = union(ConstantKind) {
             },
             .Unary => |unary| {
                 arena.destroy(ConstantUnary, 1);
-                arena.destroy(Constant, 1);
                 unary.constant.deinit(arena);
             },
             .Binary => |binary| {
                 arena.destroy(ConstantBinary, 1);
                 binary.left.deinit(arena);
                 binary.right.deinit(arena);
+            },
+            .Construct => |construct| {
+                arena.destroy(ConstantConstruct, 1);
+                construct.constants.deinit(arena);
+
+                for (construct.constants.offset(0)) |constant| {
+                    constant.deinit(arena);
+                }
+            },
+            .Procedure => |procedure| {
+                arena.destroy(ConstantProcedure, 1);
+                procedure.parameters.deinit(arena);
+            },
+            .Type => |typ| {
+                arena.destroy(ConstantType, 1);
+                typ.fields.deinit(arena);
             },
             .Scope => |scope| {
                 arena.destroy(ConstantScope, 1);
@@ -400,7 +474,7 @@ const Constant = union(ConstantKind) {
                     constant.deinit(arena);
                 }
 
-                arena.destroy(Constant, scope.constants.len);
+                scope.constants.deinit(arena);
 
                 for (scope.constants.offset(0)) |constant| {
                     constant.deinit(arena);
@@ -410,71 +484,49 @@ const Constant = union(ConstantKind) {
     }
 };
 
-const Type = struct {
-    size: u32,
-    alignment: u32,
-    fields: Array(Field),
-
-    const Field = struct {
-        name: Range,
-        inner: *Type,
-    };
-};
-
-const Procedure = struct {
-    offset: usize,
-    inner: *const Type,
-    parameters: Array(*const Type),
-};
-
-const VariableRef = struct {
-    name: *Range,
-    constant: *const Constant,
-};
-
 pub const TypeChecker = struct {
-    procedures: RangeMap(Procedure),
-    parameters: Vec(*const Type),
+    parameters: Vec(*const ConstantType),
     constants: Vec(Constant),
-    variables: RangeMap(Constant),
-    variable_refs: Vec(VariableRef),
+
     ranges: Vec(Range),
-    types: RangeMap(Type),
+
+    variables: RangeMap(*Constant),
+    variable_constants: Vec(Constant),
+    variable_refs: Vec(*Range),
 
     generator: Generator,
-    arena: Arena,
+    arena: *Arena,
+
+    const VARIABLE_MAX: u32 = 20;
 
     pub fn new(stream: Stream, allocator: *Arena) TypeChecker {
-        var arena = Arena.new(allocator.bytes(mem.PAGE_SIZE));
+        const arena = allocator.child(mem.PAGE_SIZE);
 
         return TypeChecker{
-            .procedures = RangeMap(Procedure).new(10, &arena),
-            .parameters = Vec(*const Type).new(10, &arena),
-            .constants = Vec(Constant).new(10, &arena),
-            .variables = RangeMap(Constant).new(10, &arena),
-            .variable_refs = Vec(VariableRef).new(10, &arena),
-            .ranges = Vec(Range).new(10, &arena),
-            .types = RangeMap(Type).new(10, &arena),
+            .parameters = Vec(*const ConstantType).new(10, arena),
+            .constants = Vec(Constant).new(10, arena),
+            .variables = RangeMap(*Constant).new(VARIABLE_MAX, arena),
+            .variable_constants = Vec(Constant).new(VARIABLE_MAX, arena),
+            .variable_refs = Vec(*Range).new(VARIABLE_MAX, arena),
+            .ranges = Vec(Range).new(10, arena),
 
-            .generator = Generator.new(stream, &arena),
+            .generator = Generator.new(stream, arena),
             .arena = arena,
         };
     }
 
     fn push_variable(self: *TypeChecker, name: Range, constant: Constant, words: *const String) void {
-        const index = self.variables.put(name, constant, words);
+        self.variable_constants.push(constant);
 
+        const ptr = self.variable_constants.last();
+        const index = self.variables.put(name, ptr, words);
         const ref_name = &self.variables.key[index];
-        const ref_constant = &self.variables.value[index];
 
-        self.variable_refs.push(VariableRef{
-            .name = ref_name,
-            .constant = ref_constant,
-        });
+        self.variable_refs.push(ref_name);
     }
 
-    pub fn push_scope(self: *TypeChecker, expression_count: u32, has_return: bool) void {
-        var constants = Array(Constant).new(expression_count, &self.arena);
+    pub fn push_scope(self: *TypeChecker, expression_count: u32, declaration_count: u32, has_return: bool) void {
+        var constants = Array(Constant).new(expression_count, self.arena);
         var return_value: ?Constant = null;
 
         if (has_return) {
@@ -483,6 +535,10 @@ pub const TypeChecker = struct {
 
         for (0..expression_count) |i| {
             constants.set(self.constants.pop(), expression_count - i - 1);
+        }
+
+        for (0..declaration_count) |_| {
+            self.variable_refs.pop().reset();
         }
 
         self.constants.push(Constant{ .Scope = self.arena.create(ConstantScope, ConstantScope{
@@ -497,7 +553,7 @@ pub const TypeChecker = struct {
         const range = self.ranges.pop();
 
         if (self.variables.get(words.range(range), words)) |variable| {
-            self.constants.push(Constant{ .Ref = variable });
+            self.constants.push(Constant{ .Ref = variable.* });
         } else {
             @panic("Undeclared variable");
         }
@@ -514,15 +570,15 @@ pub const TypeChecker = struct {
     }
 
     pub fn push_binary(self: *TypeChecker, operator: ConstantBinary.Operator, words: *const String) void {
-        var left = self.constants.pop();
         var right = self.constants.pop();
-        var inner: ?*const Type = null;
+        var left = self.constants.pop();
+        var inner: ?*const ConstantType = null;
 
         const left_inner = left.get_type();
         const right_inner = right.get_type();
 
         if (operator.is_comparison()) {
-            inner = self.types.get("bool", words) orelse @panic("Missing boolean type declaration");
+            inner = self.get_type("bool", words);
         } else if (left_inner) |typ| {
             if (!right.set_type(typ)) {
                 @panic("Could not set inner type of constant");
@@ -548,7 +604,7 @@ pub const TypeChecker = struct {
     }
 
     pub fn push_unary(self: *TypeChecker, operator: ConstantUnary.Operator) void {
-        const constant = self.arena.create(Constant, self.constants.pop());
+        const constant = self.constants.pop();
 
         self.constants.push(Constant{ .Unary = self.arena.create(ConstantUnary, ConstantUnary{
             .constant = constant,
@@ -562,38 +618,35 @@ pub const TypeChecker = struct {
         const range = self.ranges.pop();
         const name = words.range(range);
 
-        if (self.procedures.get(name, words)) |procedure| {
-            if (procedure.parameters.len != argument_count) {
+        const procedure = self.get_procedure(name, words);
+        if (procedure.parameters.len != argument_count) {
+            @panic("Should not happen");
+        }
+
+        var arguments = Array(Constant).new(argument_count, self.arena);
+
+        for (0..argument_count) |i| {
+            var argument = self.constants.pop();
+
+            if (!argument.set_type(procedure.parameters.items[i])) {
                 @panic("Should not happen");
             }
 
-            var arguments = Array(Constant).new(argument_count, &self.arena);
-
-            for (0..argument_count) |i| {
-                var argument = self.constants.pop();
-
-                if (!argument.set_type(procedure.parameters.items[i])) {
-                    @panic("Should not happen");
-                }
-
-                arguments.set(argument, i);
-            }
-
-            self.constants.push(Constant{ .Call = self.arena.create(ConstantCall, ConstantCall{
-                .procedure = procedure,
-                .arguments = arguments,
-                .usage = 0,
-            }) });
-        } else {
-            util.print("{s}\n", .{name});
-            @panic("Procedure not found");
+            arguments.set(argument, i);
         }
+
+        self.constants.push(Constant{ .Call = self.arena.create(ConstantCall, ConstantCall{
+            .procedure = procedure,
+            .arguments = arguments,
+            .source = null,
+            .usage = 0,
+        }) });
     }
 
     pub fn push_parameter(self: *TypeChecker, current_size: u32, words: *const String) u32 {
         const type_range = self.ranges.pop();
         const name_range = self.ranges.pop();
-        const inner = self.types.get(words.range(type_range), words) orelse @panic("Should not happen");
+        const inner = self.get_type(words.range(type_range), words);
         const size = inner.size;
 
         self.parameters.push(inner);
@@ -606,10 +659,38 @@ pub const TypeChecker = struct {
         return size;
     }
 
+    pub fn push_property(self: *TypeChecker, range: Range, words: *const String) void {
+        const constant = self.constants.pop();
+        var construct: ConstantConstruct = undefined;
+
+        switch (constant) {
+            .Ref => |ref| {
+                if (@as(ConstantKind, ref.*) != ConstantKind.Construct) @panic("Should not happen");
+                construct = ref.Construct.*;
+            },
+            .Construct => |c| construct = c.*,
+            else => @panic("Should not happen"),
+        }
+
+        var property: ?Constant = null;
+
+        for (construct.inner.fields.offset(0), 0..) |field, i| {
+            if (mem.equal(u8, words.range(field.name), words.range(range))) {
+                property = Constant{ .Ref = &construct.constants.items[i] };
+
+                break;
+            }
+        }
+
+        if (property) |p| {
+            self.constants.push(p);
+        }
+    }
+
     pub fn push_let(self: *TypeChecker, words: *const String) void {
         const type_range = self.ranges.pop();
         const name_range = self.ranges.pop();
-        const inner = self.types.get(words.range(type_range), words) orelse @panic("Should not happen");
+        const inner = self.get_type(words.range(type_range), words);
         var constant = self.constants.pop();
 
         if (!constant.set_type(inner)) {
@@ -621,7 +702,7 @@ pub const TypeChecker = struct {
 
     pub fn push_type(self: *TypeChecker, field_count: u32, annotated_size: u32, words: *const String) void {
         const name_range = self.ranges.pop();
-        var fields = Array(Type.Field).new(field_count, &self.arena);
+        var fields = Array(ConstantType.Field).new(field_count, self.arena);
 
         var size: u32 = annotated_size;
         var alignment: u32 = annotated_size;
@@ -629,31 +710,60 @@ pub const TypeChecker = struct {
         for (0..field_count) |i| {
             const field_type_range = self.ranges.pop();
             const field_name_range = self.ranges.pop();
-            const inner = self.types.get(words.range(field_type_range), words) orelse @panic("Should not happen");
+            const inner = self.get_type(words.range(field_type_range), words);
 
             size += inner.size;
             alignment = util.max(alignment, inner.alignment);
 
-            fields.set(Type.Field{
+            fields.set(ConstantType.Field{
                 .name = field_name_range,
                 .inner = inner,
             }, i);
         }
 
-        self.types.push(name_range, Type{
+        self.push_variable(name_range, Constant{ .Type = self.arena.create(ConstantType, ConstantType{
             .fields = fields,
             .size = size,
             .alignment = alignment,
-        }, words);
+            .usage = 0,
+        }) }, words);
     }
 
-    pub fn push_procedure(self: *TypeChecker, parameter_count: u32, words: *const String) void {
+    pub fn push_construct(self: *TypeChecker, field_count: u32, words: *const String) void {
+        const type_range = self.ranges.get_back(field_count);
+        const inner = self.get_type(words.range(type_range), words);
+
+        if (inner.fields.len != field_count) @panic("Should not happen");
+
+        var constants = Array(Constant).new(field_count, self.arena);
+
+        for (0..field_count) |i| {
+            const name = self.ranges.pop();
+
+            if (!mem.equal(u8, words.range(name), words.range(inner.fields.items[i].name))) {
+                @panic("For now the type construction have to be in the same order as the definitino");
+            }
+
+            var constant = self.constants.pop();
+
+            if (!constant.set_type(inner.fields.items[i].inner)) @panic("Should not happen");
+            constants.set(constant, i);
+        }
+
+        _ = self.ranges.pop();
+        self.constants.push(Constant{ .Construct = self.arena.create(ConstantConstruct, ConstantConstruct{
+            .constants = constants,
+            .inner = inner,
+            .usage = 0,
+            .source = null,
+        }) });
+    }
+
+    pub fn push_procedure(self: *TypeChecker, parameter_count: u32, variable_start: u32, words: *const String) void {
         const type_range = self.ranges.pop();
         const name_range = self.ranges.pop();
-        const inner = self.types.get(words.range(type_range), words) orelse @panic("Type not declared");
+        const inner = self.get_type(words.range(type_range), words);
         const offset: usize = 0;
-
-        if (self.constants.len != 1) @panic("Should not happen");
 
         self.generator.operations.clear();
 
@@ -662,28 +772,68 @@ pub const TypeChecker = struct {
 
         constant.usage_count(.Add);
         constant.evaluate(BinaryOperationKind.Mov, Destination{ .Register = Register.Rax }, &self.generator, true);
-        constant.deinit(&self.arena);
+        constant.deinit(self.arena);
 
-        for (0..self.variable_refs.len) |_| {
-            const ref = self.variable_refs.pop();
+        self.generator.check();
 
-            ref.name.reset();
-            ref.constant.deinit(&self.arena);
+        for (0..parameter_count) |_| {
+            self.variable_refs.pop().reset();
         }
 
-        var parameters = Array(*const Type).new(parameter_count, &self.arena);
+        for (variable_start..self.variable_constants.len) |_| {
+            self.variable_constants.pop().deinit(self.arena);
+        }
+
+        if (self.constants.len > 0) @panic("Should not happen");
+        if (self.variable_refs.len != variable_start) @panic("Should not happen");
+        if (self.variable_constants.len != variable_start) @panic("Should not happen");
+
+        var parameters = Array(*const ConstantType).new(parameter_count, self.arena);
         for (0..parameter_count) |i| {
             parameters.set(self.parameters.pop(), i);
         }
 
-        self.procedures.push(name_range, Procedure{
+        self.push_variable(name_range, Constant{ .Procedure = self.arena.create(ConstantProcedure, ConstantProcedure{
             .offset = offset,
             .inner = inner,
             .parameters = parameters,
-        }, words);
+            .usage = 0,
+        }) }, words);
+
+        util.print("usage: {}\n", .{self.arena.usage});
+    }
+
+    fn get_type(self: *TypeChecker, name: []const u8, words: *const String) *ConstantType {
+        const constant = (self.variables.get(name, words) orelse @panic("Should not happen")).*.*;
+
+        if (@as(ConstantKind, constant) != Constant.Type) @panic("Should not happen");
+
+        return constant.Type;
+    }
+
+    fn get_procedure(self: *TypeChecker, name: []const u8, words: *const String) *const ConstantProcedure {
+        const constant = (self.variables.get(name, words) orelse @panic("Should not happen")).*.*;
+
+        if (@as(ConstantKind, constant) != Constant.Procedure) @panic("Should not happen");
+
+        return constant.Procedure;
     }
 
     pub fn deinit(self: *TypeChecker) void {
+        for (self.variable_constants.offset(0)) |variable| {
+            variable.deinit(self.arena);
+        }
+
         self.generator.deinit();
+
+        self.parameters.deinit(self.arena);
+        self.constants.deinit(self.arena);
+        self.variables.deinit(self.arena);
+
+        self.variable_constants.deinit(self.arena);
+        self.variable_refs.deinit(self.arena);
+        self.ranges.deinit(self.arena);
+
+        self.arena.deinit("TypeChecker");
     }
 };
