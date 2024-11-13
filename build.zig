@@ -11,24 +11,14 @@ pub fn build(builder: *Builder) void {
         .optimize = optimize,
     });
 
-    const collections = builder.dependency("collections", .{
+    const lib = builder.dependency("lib", .{
         .target = target,
         .optimize = optimize,
     });
 
-    const util = builder.dependency("util", .{
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const mem = builder.dependency("mem", .{
-        .target = target,
-        .optimize = optimize,
-    });
-
-    executable.root_module.addImport("mem", mem.module("mem"));
-    executable.root_module.addImport("util", util.module("util"));
-    executable.root_module.addImport("collections", collections.module("collections"));
+    executable.root_module.addImport("mem", lib.module("mem"));
+    executable.root_module.addImport("util", lib.module("util"));
+    executable.root_module.addImport("collections", lib.module("collections"));
 
     builder.installArtifact(executable);
 
@@ -48,9 +38,9 @@ pub fn build(builder: *Builder) void {
         .optimize = optimize,
     });
 
-    executable_test.root_module.addImport("mem", mem.module("mem"));
-    executable_test.root_module.addImport("util", util.module("util"));
-    executable_test.root_module.addImport("collections", collections.module("collections"));
+    executable_test.root_module.addImport("mem", lib.module("mem"));
+    executable_test.root_module.addImport("util", lib.module("util"));
+    executable_test.root_module.addImport("collections", lib.module("collections"));
 
     const run_tests = builder.addRunArtifact(executable_test);
 

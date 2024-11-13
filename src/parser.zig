@@ -19,16 +19,14 @@ const Operator = lexer.Operator;
 const Precedence = enum(usize) {
     Nothing,
     Assignment,
-    Or,
-    And,
     Equality,
     Comparison,
     Term,
     Factor,
     Unary,
-    Property,
     Call,
-    Primary,
+    Declaration,
+    Scope,
 };
 
 const Fn = *const fn (parser: *Parser) void;
@@ -49,9 +47,9 @@ const Rule = struct {
     fn from_token(token: Token) Rule {
         return switch (token) {
             .Symbol => |symbol| switch (symbol) {
-                .ParentesisLeft => new(Parser.grouping, null, .Assignment),
-                .CurlyBraceLeft => new(Parser.scope, null, .Assignment),
-                .Dot => new(null, Parser.property, .Property),
+                .ParentesisLeft => new(Parser.grouping, Parser.call, .Call),
+                .CurlyBraceLeft => new(Parser.scope, Parser.construct, .Scope),
+                .Dot => new(null, Parser.property, .Call),
                 else => new(null, null, .Nothing),
             },
             .Operator => |operator| switch (operator) {
@@ -63,12 +61,13 @@ const Rule = struct {
                 else => new(null, Parser.binary, .Comparison),
             },
             .Keyword => |keyword| switch (keyword) {
+                .Let => new(Parser.let, null, .Declaration),
                 else => new(null, null, .Nothing),
             },
             .Number => new(Parser.number, null, .Nothing),
             .Identifier => new(Parser.identifier, null, .Nothing),
             .String => new(Parser.string, null, .Nothing),
-            .Eof => @panic("Should not happen"),
+            .Eof => new(null, null, .Nothing),
         };
     }
 };
@@ -90,7 +89,17 @@ pub const Parser = struct {
 
     pub fn next(self: *Parser) bool {
         if (!self.lexer.match(Token.EOF)) {
-            self.statement();
+            self.lexer.advance();
+
+            switch (self.lexer.previous) {
+                .Keyword => |keyword| switch (keyword) {
+                    .Procedure => self.procedure(),
+                    .Type => self.typ(),
+                    else => @panic("Should no happen"),
+                },
+                else => @panic("Should not happen"),
+            }
+
             return true;
         }
 
@@ -98,7 +107,7 @@ pub const Parser = struct {
     }
 
     fn grouping(self: *Parser) void {
-        self.expression();
+        self.parse(.Assignment);
         self.lexer.consume(Token.PARENTESISRIGHT);
     }
 
@@ -148,11 +157,7 @@ pub const Parser = struct {
         const range = self.lexer.previous.Identifier;
         self.checker.ranges.push(range);
 
-        if (self.lexer.match(Token.PARENTESISLEFT)) {
-            self.call();
-        } else if (self.lexer.match(Token.BRACELEFT)) {
-            self.construct();
-        } else {
+        if (self.lexer.current.eql(Token.PARENTESISLEFT) or self.lexer.current.eql(Token.BRACELEFT)) {} else {
             self.checker.push_identifier(&self.lexer.words);
         }
     }
@@ -172,7 +177,7 @@ pub const Parser = struct {
             self.lexer.consume(Token.IDEN);
             self.lexer.consume(Token.DOUBLECOLON);
 
-            self.expression();
+            self.parse(.Assignment);
             self.lexer.consume(Token.COMMA);
 
             self.checker.ranges.push(name.Identifier);
@@ -192,7 +197,7 @@ pub const Parser = struct {
                 }
             }
 
-            self.expression();
+            self.parse(.Assignment);
             argument_count += 1;
         }
 
@@ -200,8 +205,6 @@ pub const Parser = struct {
     }
 
     fn typ(self: *Parser) void {
-        self.lexer.advance();
-
         const name = self.lexer.current;
         self.lexer.consume(Token.IDEN);
 
@@ -245,8 +248,6 @@ pub const Parser = struct {
     }
 
     fn procedure(self: *Parser) void {
-        self.lexer.advance();
-
         const name = self.lexer.current;
 
         self.lexer.consume(Token.IDEN);
@@ -290,8 +291,6 @@ pub const Parser = struct {
     }
 
     fn let(self: *Parser) void {
-        self.lexer.advance();
-
         const mutable = self.lexer.match(Token.MUT);
         const iden = self.lexer.current;
 
@@ -305,7 +304,7 @@ pub const Parser = struct {
         self.lexer.consume(Token.IDEN);
         self.lexer.consume(Token.EQUAL);
 
-        self.expression();
+        self.parse(.Assignment);
 
         self.lexer.consume(Token.SEMICOLON);
         self.checker.ranges.extend(&.{ iden.Identifier, kind.Identifier });
@@ -326,6 +325,7 @@ pub const Parser = struct {
             switch (self.lexer.current) {
                 Token.Keyword => |keyword| switch (keyword) {
                     Keyword.Let => {
+                        self.lexer.advance();
                         self.let();
                         declaration_count += 1;
                     },
@@ -333,7 +333,7 @@ pub const Parser = struct {
                 },
 
                 else => {
-                    self.expression();
+                    self.parse(.Assignment);
 
                     if (!self.lexer.previous.eql(Token.SEMICOLON)) {
                         if (self.lexer.match(Token.BRACERIGHT)) {
@@ -371,22 +371,6 @@ pub const Parser = struct {
             }
 
             rule = Rule.from_token(self.lexer.current);
-        }
-    }
-
-    fn expression(self: *Parser) void {
-        self.parse(.Assignment);
-    }
-
-    fn statement(self: *Parser) void {
-        switch (self.lexer.current) {
-            Token.Keyword => |keyword| switch (keyword) {
-                Keyword.Let => self.let(),
-                Keyword.Procedure => self.procedure(),
-                Keyword.Type => self.typ(),
-                else => @panic("TODO"),
-            },
-            else => self.expression(),
         }
     }
 

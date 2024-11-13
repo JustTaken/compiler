@@ -44,13 +44,23 @@ pub fn back_copy(T: type, src: []const T, dst: []T) void {
 
 pub fn equal(T: type, one: []const T, two: []const T) bool {
     if (one.len != two.len) return false;
-    const len = util.min(one.len, two.len);
+    const len = min(one.len, two.len);
 
     for (0..len) |i| {
         if (one[i] != two[i]) return false;
     }
 
     return true;
+}
+
+pub fn min(one: usize, two: usize) u32 {
+    if (one < two) return @intCast(one);
+    return @intCast(two);
+}
+
+pub fn max(one: usize, two: usize) u32 {
+    if (one > two) return @intCast(one);
+    return @intCast(two);
 }
 
 pub fn as_bytes(T: type, ptr: *const T) []const u8 {
@@ -76,6 +86,8 @@ pub const Arena = struct {
     max_usage: u32,
     capacity: u32,
     name: []const u8,
+    allocations: u32,
+    frees: u32,
 
     parent: ?*Arena,
 
@@ -88,6 +100,8 @@ pub const Arena = struct {
             .usage = 0,
             .max_usage = 0,
             .parent = null,
+            .allocations = 0,
+            .frees = 0,
             .name = name,
         };
     }
@@ -103,6 +117,8 @@ pub const Arena = struct {
                 .parent = self,
                 .max_usage = 0,
                 .usage = 0,
+                .allocations = 0,
+                .frees = 0,
                 .name = name,
             },
         );
@@ -114,7 +130,7 @@ pub const Arena = struct {
         }
 
         const lenght = align_with(@sizeOf(T) * count, BASE_SIZE);
-        util.print(.Debug, "Allocate - {s}: ({}:{})/{} - ({s}:{})\n", .{ self.name, self.usage, lenght, self.capacity, @typeName(T), count });
+        util.print(.Debug, "Allocate - {}: ({}:{})/{} - ({}:{}) - allocations: {}", .{ self.name, self.usage, lenght, self.capacity, @typeName(T), count, self.allocations });
 
         if (lenght + self.usage > self.capacity) {
             @panic("Arena do not have enhough size");
@@ -122,6 +138,7 @@ pub const Arena = struct {
 
         defer self.usage += @intCast(lenght);
         const ptr: usize = @intFromPtr(self.ptr) + self.usage;
+        defer self.allocations += 1;
 
         return @ptrFromInt(ptr);
     }
@@ -136,12 +153,13 @@ pub const Arena = struct {
     pub fn destroy(self: *Arena, T: type, count: usize) void {
         if (count == 0) return;
 
-        self.max_usage = util.max(self.usage, self.max_usage);
+        self.max_usage = max(self.usage, self.max_usage);
 
         const length = align_with(@sizeOf(T) * count, BASE_SIZE);
         defer self.usage -= @intCast(length);
+        defer self.frees += 1;
 
-        util.print(.Debug, "Destroy - {s}: ({}:{})/{} - ({s}:{})\n", .{ self.name, self.usage, length, self.capacity, @typeName(T), count });
+        util.print(.Debug, "Destroy - {}: ({}:{})/{} - ({}:{}) - frees: {}", .{ self.name, self.usage, length, self.capacity, @typeName(T), count, self.frees });
     }
 
     pub fn deinit(self: *Arena) void {
@@ -153,8 +171,8 @@ pub const Arena = struct {
             mfree(buffer[0..self.capacity]);
         }
 
-        if (self.usage > 0) @panic("Arena should be clear before deinitialization");
+        util.print(.Debug, "Deinit - {}: ({}:{})/{} - ({}/{})", .{ self.name, self.usage, self.max_usage, self.capacity, self.allocations, self.frees });
 
-        util.print(.Debug, "Deinit - {s}: ({}:{})/{}\n", .{ self.name, self.usage, self.max_usage, self.capacity });
+        if (self.usage > 0) @panic("Arena should be clear before deinitialization");
     }
 };

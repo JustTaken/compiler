@@ -1,5 +1,5 @@
-const util = @import("util");
 const mem = @import("mem");
+const util = @import("util");
 const std = @import("std");
 
 const Arena = mem.Arena;
@@ -145,8 +145,9 @@ pub fn Array(T: type) type {
             return self.items[o..self.len];
         }
 
-        pub fn deinit(self: *const Self, arena: *Arena) void {
+        pub fn deinit(self: *Self, arena: *Arena) void {
             arena.destroy(T, self.len);
+            self.len = 0;
         }
     };
 }
@@ -270,8 +271,10 @@ pub fn Vec(T: type) type {
             self.len = 0;
         }
 
-        pub fn deinit(self: *const Self, arena: *Arena) void {
+        pub fn deinit(self: *Self, arena: *Arena) void {
+            self.clear();
             arena.destroy(T, self.capacity);
+            self.capacity = 0;
         }
     };
 }
@@ -302,6 +305,8 @@ pub fn RangeMap(T: type) type {
         }
 
         pub fn put(self: *Self, key: Range, item: T, buffer: *const Vec(u8)) u32 {
+            if (self.capacity == 0) @panic("Should not happen");
+
             const h = util.hash(buffer.range(key));
 
             var code = h % self.capacity;
@@ -342,9 +347,35 @@ pub fn RangeMap(T: type) type {
             return null;
         }
 
-        pub fn deinit(self: *const Self, arena: *Arena) void {
+        pub fn deinit(self: *Self, arena: *Arena) void {
             arena.destroy(T, self.capacity);
             arena.destroy(Range, self.capacity);
+            self.capacity = 0;
+        }
+    };
+}
+
+pub fn Iter(T: type) type {
+    return struct {
+        items: [*]const T,
+        len: usize,
+        index: usize,
+
+        const Self = @This();
+
+        pub fn new(comptime items: []const T) Self {
+            return Self{
+                .items = items.ptr,
+                .len = items.len,
+                .index = 0,
+            };
+        }
+
+        pub fn next(comptime self: *Self) ?T {
+            if (self.index >= self.len) return null;
+
+            defer self.index += 1;
+            return self.items[self.index];
         }
     };
 }

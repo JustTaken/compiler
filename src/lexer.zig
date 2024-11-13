@@ -14,6 +14,14 @@ pub const Keyword = enum {
     Procedure,
     Mut,
 
+    pub fn print(self: Keyword, formater: util.Formater) void {
+        switch (self) {
+            .Let => formater("Keyword::Let", .{}),
+            .Type => formater("Keyword::Type", .{}),
+            .Procedure => formater("Keyword::Procedure", .{}),
+            .Mut => formater("Keyword::Mut", .{}),
+        }
+    }
     fn from_string(string: []const u8) ?Keyword {
         if (string.len == 0) return null;
 
@@ -46,6 +54,21 @@ pub const Symbol = enum {
     Comma,
     Arrow,
     Dot,
+
+    pub fn print(self: Symbol, formater: util.Formater) void {
+        switch (self) {
+            .Equal => formater("Symbol::Equal", .{}),
+            .ParentesisLeft => formater("Symbol::ParentesisLeft", .{}),
+            .ParentesisRight => formater("Symbol::ParentesisRight", .{}),
+            .Semicolon => formater("Symbol::Semicolon", .{}),
+            .DoubleColon => formater("Symbol::DoubleColon", .{}),
+            .CurlyBraceLeft => formater("Symbol::CurlyBraceLeft", .{}),
+            .CurlyBraceRight => formater("Symbol::CurlyBraceRight", .{}),
+            .Comma => formater("Symbol::Comma", .{}),
+            .Arrow => formater("Symbol::Arrow", .{}),
+            .Dot => formater("Symbol::Dot", .{}),
+        }
+    }
 };
 
 pub const Operator = enum {
@@ -60,6 +83,22 @@ pub const Operator = enum {
     Bang,
     BangEqual,
     EqualEqual,
+
+    pub fn print(self: Operator, formater: util.Formater) void {
+        switch (self) {
+            .Plus => formater("Operator::Plus", .{}),
+            .Minus => formater("Operator::Minus", .{}),
+            .Star => formater("Operator::Star", .{}),
+            .Slash => formater("Operator::Slash", .{}),
+            .Greater => formater("Operator::Greater", .{}),
+            .GreaterEqual => formater("Operator::GreaterEqual", .{}),
+            .Less => formater("Operator::Less", .{}),
+            .LessEqual => formater("Operator::LessEqual", .{}),
+            .Bang => formater("Operator::Bang", .{}),
+            .BangEqual => formater("Operator::BangEqual", .{}),
+            .EqualEqual => formater("Operator::EqualEqual", .{}),
+        }
+    }
 };
 
 const TokenKind = enum {
@@ -104,6 +143,17 @@ pub const Token = union(TokenKind) {
     pub const FALSE: Token = Token{ .Keyword = Keyword.False };
     pub const EOF: Token = Token.Eof;
 
+    pub fn print(self: Token, formater: util.Formater) void {
+        switch (self) {
+            .Eof => formater("Token::Eof", .{}),
+            .Identifier => formater("Token::Identifier", .{}),
+            .String => formater("Token::String", .{}),
+            .Number => formater("Token::Number", .{}),
+            .Keyword => |keyword| formater("Token::Keyword({})", .{keyword}),
+            .Operator => |operator| formater("Token::Operator({})", .{operator}),
+            .Symbol => |symbol| formater("Token::Symbol({})", .{symbol}),
+        }
+    }
     pub fn eql(self: Token, other: Token) bool {
         switch (self) {
             .Eof => return @as(TokenKind, other) == .Eof,

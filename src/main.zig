@@ -7,7 +7,7 @@ const Parser = @import("parser.zig").Parser;
 const Arena = mem.Arena;
 
 const CommandLineArgument = struct {
-    debug_mode: bool,
+    log: util.Logger.Level,
     input_path: ?[]const u8,
     output_path: ?[]const u8,
 
@@ -17,39 +17,48 @@ const CommandLineArgument = struct {
     };
 
     const Command = enum {
-        OutputPath,
-        DebugMode,
+        Output,
+        Debug,
+        Info,
     };
 
-    fn check_argument(arg: []const u8) error{InvalidArgument}!ArgumentKind {
-        if (arg.len == 0) return error.InvalidArgument;
+    const Error = error{
+        Argument,
+        Command,
+        DebugFlagCombination,
+    };
+
+    fn check_argument(arg: []const u8) error{Argument}!ArgumentKind {
+        if (arg.len == 0) return error.Argument;
         if (arg[0] == '-') return ArgumentKind.Command;
 
         if (util.is_alpha(arg[0])) {
             return ArgumentKind.Path;
         } else {
-            return error.InvalidArgument;
+            return error.Argument;
         }
     }
 
-    fn check_command(arg: []const u8) error{InvalidCommand}!Command {
+    fn check_command(arg: []const u8) error{Command}!Command {
         if (arg.len == 1) {
-            return error.InvalidCommand;
+            return error.Command;
         }
 
         if (mem.equal(u8, arg[1..], "o")) {
-            return Command.OutputPath;
+            return Command.Output;
         } else if (mem.equal(u8, arg[1..], "debug")) {
-            return Command.DebugMode;
+            return Command.Debug;
+        } else if (mem.equal(u8, arg[1..], "info")) {
+            return Command.Info;
         } else {
-            return error.InvalidCommand;
+            return error.Command;
         }
     }
 
-    fn new() error{ InvalidArgument, InvalidCommand }!CommandLineArgument {
+    fn new() Error!CommandLineArgument {
         var input_path: ?[]const u8 = null;
         var output_path: ?[]const u8 = null;
-        var debug_mode = false;
+        var log: ?util.Logger.Level = null;
 
         var i: u32 = 1;
         while (i < std.os.argv.len) {
@@ -57,16 +66,21 @@ const CommandLineArgument = struct {
 
             switch (try check_argument(arg)) {
                 .Command => switch (try check_command(arg)) {
-                    .OutputPath => {
+                    .Output => {
                         i += 1;
-                        if (std.os.argv.len <= i) return error.InvalidArgument;
+                        if (std.os.argv.len <= i) return Error.Argument;
 
                         const output_arg = util.convert(std.os.argv[i]);
-                        if (try check_argument(output_arg) != ArgumentKind.Path) return error.InvalidArgument;
+                        if (try check_argument(output_arg) != ArgumentKind.Path) return Error.Argument;
 
                         output_path = output_arg;
                     },
-                    .DebugMode => debug_mode = true,
+                    .Debug => {
+                        if (log) |_| return Error.DebugFlagCombination else log = .Debug;
+                    },
+                    .Info => {
+                        if (log) |_| return Error.DebugFlagCombination else log = .Info;
+                    },
                 },
                 .Path => input_path = arg,
             }
@@ -77,7 +91,7 @@ const CommandLineArgument = struct {
         return CommandLineArgument{
             .input_path = input_path,
             .output_path = output_path,
-            .debug_mode = debug_mode,
+            .log = log orelse .None,
         };
     }
 };
@@ -135,7 +149,7 @@ const Time = struct {
     }
 
     fn print(self: Time) void {
-        util.print(.Info, "{d}{s}\n", .{ self.value, self.kind.as_string() });
+        util.print(.Info, "{}{}", .{ self.value, self.kind.as_string() });
     }
 };
 
@@ -143,13 +157,16 @@ pub fn main() !void {
     const start = try std.time.Instant.now();
     const command_line = try CommandLineArgument.new();
 
-    util.debug_mode = command_line.debug_mode;
+    util.Logger.level = command_line.log;
 
     const input = command_line.input_path orelse @panic("Missing input file");
     const output = command_line.output_path orelse @panic("Missing output file");
 
-    var arena = mem.Arena.new("Main", 3);
+    var arena = mem.Arena.new("Main", 4);
     defer arena.deinit();
+
+    util.Logger.set_buffer(&arena);
+    defer util.Logger.deinit(&arena);
 
     var input_file = try collections.File.open(input);
     var output_file = try collections.File.create(output);

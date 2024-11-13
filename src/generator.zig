@@ -25,6 +25,18 @@ pub const Register = enum(u8) {
     fn value(self: Register) u8 {
         return @intFromEnum(self);
     }
+    pub fn print(self: Register, formater: util.Formater) void {
+        switch (self) {
+            .Rax => formater("Register::Rax", .{}),
+            .Rcx => formater("Register::Rcx", .{}),
+            .Rdx => formater("Register::Rdx", .{}),
+            .Rbx => formater("Register::Rbx", .{}),
+            .Rsp => formater("Register::Rsp", .{}),
+            .Rbp => formater("Register::Rbp", .{}),
+            .Rsi => formater("Register::Rsi", .{}),
+            .Rdi => formater("Register::Rdi", .{}),
+        }
+    }
 };
 
 const Immediate = usize;
@@ -44,6 +56,10 @@ fn to_bytes(int: usize) [8]u8 {
 pub const Memory = struct {
     register: Register,
     offset: Offset,
+
+    pub fn print(self: Memory, formater: util.Formater) void {
+        formater("Memory({} {})", .{ self.register, self.offset });
+    }
 };
 
 pub const SourceKind = enum { Register, Memory, Immediate, Stack };
@@ -55,6 +71,15 @@ pub const Source = union(SourceKind) {
 
     fn eql(self: Source, other: SourceKind) bool {
         return @as(SourceKind, self) == other;
+    }
+
+    pub fn print(self: Source, formater: util.Formater) void {
+        return switch (self) {
+            .Register => |r| formater("Register({})", .{r}),
+            .Memory => |m| formater("Memory({})", .{m}),
+            .Immediate => |i| formater("Immediate({})", .{i}),
+            .Stack => formater("Stack", .{}),
+        };
     }
 };
 
@@ -72,7 +97,15 @@ pub const Destination = union(DestinationKind) {
         return switch (self) {
             .Register => |r| Source{ .Register = r },
             .Memory => |m| Source{ .Memory = m },
-            .Stack => Source{ .Stack = {} },
+            .Stack => Source.Stack,
+        };
+    }
+
+    pub fn print(self: Destination, formater: util.Formater) void {
+        return switch (self) {
+            .Register => |r| formater("Source({})", .{r}),
+            .Memory => |m| formater("Source({})", .{m}),
+            .Stack => formater("Source(Stack)", .{}),
         };
     }
 };
@@ -84,6 +117,15 @@ pub const BinaryOperation = struct {
     kind: BinaryKind,
     source: Source,
     destination: Destination,
+
+    pub fn print(self: BinaryOperation, formater: util.Formater) void {
+        switch (self.kind) {
+            .Mov => formater("Mov({} -> {})", .{ self.source, self.destination }),
+            .Add => formater("Add({} -> {})", .{ self.source, self.destination }),
+            .Sub => formater("Sub({} -> {})", .{ self.source, self.destination }),
+            .Mul => formater("Mul({} -> {})", .{ self.source, self.destination }),
+        }
+    }
 
     fn write_mov(self: BinaryOperation, buffer: *String) void {
         switch (self.destination) {
@@ -158,8 +200,17 @@ pub const Operation = union(OperationKind) {
     Ret,
     Syscall,
 
+    pub fn print(self: Operation, formater: util.Formater) void {
+        switch (self) {
+            .Syscall => formater("Syscall", .{}),
+            .Ret => formater("Ret", .{}),
+            .Call => |immediate| formater("Call({})", .{immediate}),
+            .Binary => |binary| formater("Binary({})", .{binary}),
+        }
+    }
+
     fn write(self: Operation, buffer: *String) void {
-        util.print(.Info, "{}\n", .{self});
+        util.print(.Info, "Operation({})", .{self});
 
         switch (self) {
             .Syscall => buffer.extend(&.{ 0x0F, 0x05 }),
@@ -325,8 +376,6 @@ pub const Generator = struct {
 
         self.operations.push(Operation.Ret);
 
-        util.print(.Info, "------------------------------------\n", .{});
-
         for (startup_instructions.offset(0)) |operation| {
             operation.write(&self.code);
         }
@@ -334,8 +383,6 @@ pub const Generator = struct {
         for (self.operations.offset(0)) |operation| {
             operation.write(&self.code);
         }
-
-        util.print(.Info, "------------------------------------\n", .{});
 
         self.manager.reset();
         self.operations.clear();

@@ -117,6 +117,14 @@ const ConstantConstruct = struct {
     usage: usize,
 };
 
+const ConstantFieldAcess = struct {
+    constant: Constant,
+    inner: *const ConstantType,
+    index: usize,
+    usage: usize,
+    source: ?Source,
+};
+
 const ConstantUsageModification = enum(usize) {
     Remove,
     Add,
@@ -139,6 +147,16 @@ const ConstantType = struct {
         name: Range,
         inner: *ConstantType,
     };
+
+    fn field_index(self: *const ConstantType, range: Range, words: *const String) usize {
+        for (self.fields.offset(0), 0..) |field, i| {
+            if (mem.equal(u8, words.range(field.name), words.range(range))) {
+                return i;
+            }
+        }
+
+        @panic("Should not happen");
+    }
 };
 
 const ConstantProcedure = struct {
@@ -155,6 +173,7 @@ const ConstantKind = enum {
     Binary,
     Unary,
     Construct,
+    FieldAcess,
     Ref,
     Scope,
     Procedure,
@@ -168,6 +187,7 @@ const Constant = union(ConstantKind) {
     Binary: *ConstantBinary,
     Unary: *ConstantUnary,
     Construct: *ConstantConstruct,
+    FieldAcess: *ConstantFieldAcess,
     Ref: *Constant,
     Scope: *ConstantScope,
     Procedure: *ConstantProcedure,
@@ -188,6 +208,7 @@ const Constant = union(ConstantKind) {
                     binary.inner = inner;
                 }
             },
+            .FieldAcess => |field| return field.inner == inner,
             .Number => |number| {
                 if (number.inner) |typ| {
                     return typ == inner;
@@ -206,6 +227,7 @@ const Constant = union(ConstantKind) {
             .Procedure, .Type => @panic("Why?"),
             .Parameter => |parameter| parameter.inner,
             .Call => |call| call.procedure.inner,
+            .FieldAcess => |field| field.inner,
             .Construct => |construct| construct.inner,
             .Unary => |unary| unary.constant.get_type(),
             .Ref => |constant| constant.get_type(),
@@ -221,6 +243,7 @@ const Constant = union(ConstantKind) {
             .Parameter => |parameter| parameter.usage = mod.apply(parameter.usage),
             .Procedure => |procedure| procedure.usage = mod.apply(procedure.usage),
             .Type => |typ| typ.usage = mod.apply(typ.usage),
+            .FieldAcess => |field| field.usage = mod.apply(field.usage),
             .Unary => |unary| {
                 unary.usage = mod.apply(unary.usage);
 
@@ -281,6 +304,7 @@ const Constant = union(ConstantKind) {
             .Binary => |binary| binary.usage,
             .Procedure => |procedure| procedure.usage,
             .Type => |typ| typ.usage,
+            .FieldAcess => |field| field.usage,
             .Scope => |scope| scope.usage,
             .Number => |number| number.usage,
             .Unary => |unary| unary.usage,
@@ -297,6 +321,7 @@ const Constant = union(ConstantKind) {
             .Call => |call| call.source = source,
             .Construct => |construct| construct.source = source,
             .Binary => |binary| binary.source = source,
+            .FieldAcess => |field| field.source = source,
             .Scope => |scope| {
                 if (scope.return_value) |*constant| {
                     constant.set_source(source);
@@ -314,6 +339,7 @@ const Constant = union(ConstantKind) {
             .Number => |number| Source{ .Immediate = number.value },
             .Call => |call| call.source,
             .Construct => |construct| construct.source,
+            .FieldAcess => |field| field.source,
             .Binary => |binary| binary.source,
             .Scope => |scope| blk: {
                 if (scope.return_value) |constant| {
@@ -411,7 +437,8 @@ const Constant = union(ConstantKind) {
 
                 scope.used = true;
             },
-            .Construct => @panic("TODO"),
+            .Construct => {},
+            .FieldAcess => {},
             .Ref => |constant| {
                 const dst = destination orelse @panic("Should not happen");
 
@@ -440,13 +467,15 @@ const Constant = union(ConstantKind) {
             .Ref => {},
             .Parameter => arena.destroy(ConstantParameter, 1),
             .Number => arena.destroy(ConstantNumber, 1),
+            .FieldAcess => arena.destroy(ConstantFieldAcess, 1),
             .Call => |call| {
                 arena.destroy(ConstantCall, 1);
-                call.arguments.deinit(arena);
 
                 for (call.arguments.offset(0)) |argument| {
                     argument.deinit(arena);
                 }
+
+                call.arguments.deinit(arena);
             },
             .Unary => |unary| {
                 arena.destroy(ConstantUnary, 1);
@@ -459,11 +488,12 @@ const Constant = union(ConstantKind) {
             },
             .Construct => |construct| {
                 arena.destroy(ConstantConstruct, 1);
-                construct.constants.deinit(arena);
 
                 for (construct.constants.offset(0)) |constant| {
                     constant.deinit(arena);
                 }
+
+                construct.constants.deinit(arena);
             },
             .Procedure => |procedure| {
                 arena.destroy(ConstantProcedure, 1);
@@ -480,11 +510,11 @@ const Constant = union(ConstantKind) {
                     constant.deinit(arena);
                 }
 
-                scope.constants.deinit(arena);
-
                 for (scope.constants.offset(0)) |constant| {
                     constant.deinit(arena);
                 }
+
+                scope.constants.deinit(arena);
             },
         }
     }
@@ -665,32 +695,44 @@ pub const TypeChecker = struct {
         return size;
     }
 
-    pub fn push_property(self: *TypeChecker, range: Range, words: *const String) void {
-        const constant = self.constants.pop();
-        var construct: ConstantConstruct = undefined;
-
+    fn get_property(self: *TypeChecker, constant: Constant, range: Range, words: *const String) Constant {
         switch (constant) {
             .Ref => |ref| {
-                if (@as(ConstantKind, ref.*) != ConstantKind.Construct) @panic("Should not happen");
-                construct = ref.Construct.*;
+                return self.get_property(ref.*, range, words);
             },
-            .Construct => |c| construct = c.*,
+            .Construct => |construct| {
+                const index = construct.inner.field_index(range, words);
+                return Constant{ .Ref = &construct.constants.items[index] };
+            },
+            .FieldAcess => |field| {
+                const index = field.inner.field_index(range, words);
+
+                return Constant{ .FieldAcess = self.arena.create(ConstantFieldAcess, ConstantFieldAcess{
+                    .index = index,
+                    .constant = Constant{ .FieldAcess = field },
+                    .usage = 0,
+                    .source = null,
+                    .inner = field.inner.fields.items[index].inner,
+                }) };
+            },
+            .Call => |call| {
+                const index = call.procedure.inner.field_index(range, words);
+
+                return Constant{ .FieldAcess = self.arena.create(ConstantFieldAcess, ConstantFieldAcess{
+                    .index = index,
+                    .constant = Constant{ .Call = call },
+                    .usage = 0,
+                    .source = null,
+                    .inner = call.procedure.inner.fields.items[index].inner,
+                }) };
+            },
             else => @panic("Should not happen"),
         }
+    }
 
-        var property: ?Constant = null;
-
-        for (construct.inner.fields.offset(0), 0..) |field, i| {
-            if (mem.equal(u8, words.range(field.name), words.range(range))) {
-                property = Constant{ .Ref = &construct.constants.items[i] };
-
-                break;
-            }
-        }
-
-        if (property) |p| {
-            self.constants.push(p);
-        }
+    pub fn push_property(self: *TypeChecker, range: Range, words: *const String) void {
+        const constant = self.constants.pop();
+        self.constants.push(self.get_property(constant, range, words));
     }
 
     pub fn push_let(self: *TypeChecker, words: *const String) void {

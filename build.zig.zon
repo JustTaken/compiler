@@ -4,16 +4,8 @@
     .minimum_zig_version = "0.13.0",
 
     .dependencies = .{
-        .collections = .{
-            .path = "collections",
-            .lazy = false,
-        },
-        .mem = .{
-            .path = "mem",
-            .lazy = false,
-        },
-        .util = .{
-            .path = "util",
+        .lib = .{
+            .path = "lib",
             .lazy = false,
         },
     },
