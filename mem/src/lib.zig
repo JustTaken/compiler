@@ -2,6 +2,7 @@ const std = @import("std");
 const util = @import("util");
 
 pub const PAGE_SIZE: u32 = std.mem.page_size;
+pub const BASE_SIZE: u32 = @sizeOf(usize);
 
 pub fn malloc(pages: usize) []u8 {
     const buffer = std.posix.mmap(
@@ -31,6 +32,16 @@ pub fn copy(T: type, src: []const T, dst: []T) void {
     }
 }
 
+pub fn back_copy(T: type, src: []const T, dst: []T) void {
+    @setRuntimeSafety(false);
+
+    const len = src.len;
+
+    for (0..len) |i| {
+        dst[len - i - 1] = src[len - i - 1];
+    }
+}
+
 pub fn equal(T: type, one: []const T, two: []const T) bool {
     if (one.len != two.len) return false;
     const len = util.min(one.len, two.len);
@@ -49,15 +60,26 @@ pub fn as_bytes(T: type, ptr: *const T) []const u8 {
     return buffer[0..size];
 }
 
+fn align_with(value: usize, with: usize) usize {
+    const rest = value % with;
+
+    if (rest == 0) {
+        return value;
+    }
+
+    return value + with - rest;
+}
+
 pub const Arena = struct {
     ptr: *anyopaque,
     usage: u32,
     max_usage: u32,
     capacity: u32,
+    name: []const u8,
 
     parent: ?*Arena,
 
-    pub fn new(pages: u32) Arena {
+    pub fn new(name: []const u8, pages: u32) Arena {
         const buffer = malloc(pages);
 
         return .{
@@ -66,10 +88,11 @@ pub const Arena = struct {
             .usage = 0,
             .max_usage = 0,
             .parent = null,
+            .name = name,
         };
     }
 
-    pub fn child(self: *Arena, size: u32) *Arena {
+    pub fn child(self: *Arena, name: []const u8, size: u32) *Arena {
         const buffer = self.alloc(u8, size);
 
         return self.create(
@@ -80,34 +103,25 @@ pub const Arena = struct {
                 .parent = self,
                 .max_usage = 0,
                 .usage = 0,
+                .name = name,
             },
         );
     }
 
-    pub fn alloc(self: *Arena, T: type, size: u32) [*]T {
-        if (size == 0) {
+    pub fn alloc(self: *Arena, T: type, count: u32) [*]T {
+        if (count == 0) {
             return @ptrCast(@alignCast(self.ptr));
         }
 
-        const lenght = @sizeOf(T) * size;
+        const lenght = align_with(@sizeOf(T) * count, BASE_SIZE);
+        util.print(.Debug, "Allocate - {s}: ({}:{})/{} - ({s}:{})\n", .{ self.name, self.usage, lenght, self.capacity, @typeName(T), count });
 
         if (lenght + self.usage > self.capacity) {
-            util.print("{}:{}/{}\n", .{ lenght, self.usage, self.capacity });
-
             @panic("Arena do not have enhough size");
         }
 
-        var ptr: usize = @intFromPtr(self.ptr) + self.usage;
-        self.usage += lenght;
-
-        const alig = @alignOf(T);
-        const rest = ptr % alig;
-
-        if (rest > 0) {
-            const offset: u32 = @intCast(alig - rest);
-            self.usage += offset;
-            ptr += offset;
-        }
+        defer self.usage += @intCast(lenght);
+        const ptr: usize = @intFromPtr(self.ptr) + self.usage;
 
         return @ptrFromInt(ptr);
     }
@@ -119,20 +133,18 @@ pub const Arena = struct {
         return @ptrCast(ptr);
     }
 
-    pub fn destroy(self: *Arena, T: type, count: u32) void {
-        const len: u32 = @intCast(@sizeOf(T));
+    pub fn destroy(self: *Arena, T: type, count: usize) void {
+        if (count == 0) return;
 
         self.max_usage = util.max(self.usage, self.max_usage);
-        const size = len * count;
 
-        if (size > self.usage) {
-            util.print("out of lengh: {}, {} {}\n", .{ size, self.capacity, self.usage });
-        }
+        const length = align_with(@sizeOf(T) * count, BASE_SIZE);
+        defer self.usage -= @intCast(length);
 
-        self.usage -= size;
+        util.print(.Debug, "Destroy - {s}: ({}:{})/{} - ({s}:{})\n", .{ self.name, self.usage, length, self.capacity, @typeName(T), count });
     }
 
-    pub fn deinit(self: *Arena, name: []const u8) void {
+    pub fn deinit(self: *Arena) void {
         if (self.parent) |arena| {
             arena.destroy(u8, self.capacity);
             arena.destroy(Arena, 1);
@@ -141,7 +153,8 @@ pub const Arena = struct {
             mfree(buffer[0..self.capacity]);
         }
 
-        self.max_usage = util.max(self.usage, self.max_usage);
-        util.print("{s}: ({}:{})/{}\n", .{ name, self.usage, self.max_usage, self.capacity });
+        if (self.usage > 0) @panic("Arena should be clear before deinitialization");
+
+        util.print(.Debug, "Deinit - {s}: ({}:{})/{}\n", .{ self.name, self.usage, self.max_usage, self.capacity });
     }
 };

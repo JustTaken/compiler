@@ -327,7 +327,13 @@ const Constant = union(ConstantKind) {
         };
     }
 
-    fn evaluate(self: Constant, operation: BinaryOperationKind, destination: ?Destination, gen: *Generator, change_count: bool) void {
+    fn evaluate(
+        self: Constant,
+        operation: BinaryOperationKind,
+        destination: ?Destination,
+        gen: *Generator,
+        change_count: bool,
+    ) void {
         if (change_count) {
             self.usage_count(.Remove);
         }
@@ -350,7 +356,7 @@ const Constant = union(ConstantKind) {
             },
             .Call => |call| {
                 for (call.arguments.offset(0)) |argument| {
-                    argument.evaluate(.Mov, Destination{ .Stack = {} }, gen, change_count);
+                    argument.evaluate(.Mov, Destination.Stack, gen, change_count);
                 }
 
                 gen.operations.push(Operation{ .Call = call.procedure.offset });
@@ -500,7 +506,7 @@ pub const TypeChecker = struct {
     const VARIABLE_MAX: u32 = 20;
 
     pub fn new(stream: Stream, allocator: *Arena) TypeChecker {
-        const arena = allocator.child(mem.PAGE_SIZE);
+        const arena = allocator.child("TypeChecker", mem.PAGE_SIZE + 1900);
 
         return TypeChecker{
             .parameters = Vec(*const ConstantType).new(10, arena),
@@ -763,9 +769,7 @@ pub const TypeChecker = struct {
         const type_range = self.ranges.pop();
         const name_range = self.ranges.pop();
         const inner = self.get_type(words.range(type_range), words);
-        const offset: usize = 0;
-
-        self.generator.operations.clear();
+        const offset: usize = self.generator.code.len;
 
         var constant = self.constants.pop();
         if (!constant.set_type(inner)) @panic("Should not happen");
@@ -773,8 +777,6 @@ pub const TypeChecker = struct {
         constant.usage_count(.Add);
         constant.evaluate(BinaryOperationKind.Mov, Destination{ .Register = Register.Rax }, &self.generator, true);
         constant.deinit(self.arena);
-
-        self.generator.check();
 
         for (0..parameter_count) |_| {
             self.variable_refs.pop().reset();
@@ -788,6 +790,8 @@ pub const TypeChecker = struct {
         if (self.variable_refs.len != variable_start) @panic("Should not happen");
         if (self.variable_constants.len != variable_start) @panic("Should not happen");
 
+        self.generator.push_procedure();
+
         var parameters = Array(*const ConstantType).new(parameter_count, self.arena);
         for (0..parameter_count) |i| {
             parameters.set(self.parameters.pop(), i);
@@ -799,8 +803,6 @@ pub const TypeChecker = struct {
             .parameters = parameters,
             .usage = 0,
         }) }, words);
-
-        util.print("usage: {}\n", .{self.arena.usage});
     }
 
     fn get_type(self: *TypeChecker, name: []const u8, words: *const String) *ConstantType {
@@ -819,6 +821,13 @@ pub const TypeChecker = struct {
         return constant.Procedure;
     }
 
+    pub fn generate(self: *TypeChecker, words: *const String) void {
+        const main_procedure = self.get_procedure("main", words);
+        if (main_procedure.inner.size != 4) @panic("Return type from main procedure should be of size 4");
+
+        self.generator.generate(main_procedure.offset);
+    }
+
     pub fn deinit(self: *TypeChecker) void {
         for (self.variable_constants.offset(0)) |variable| {
             variable.deinit(self.arena);
@@ -834,6 +843,6 @@ pub const TypeChecker = struct {
         self.variable_refs.deinit(self.arena);
         self.ranges.deinit(self.arena);
 
-        self.arena.deinit("TypeChecker");
+        self.arena.deinit();
     }
 };

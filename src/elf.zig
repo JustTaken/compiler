@@ -49,13 +49,13 @@ pub const Header = extern struct {
     const ABI_VERSION: u8 = 0x00;
     const PADDING: u8 = 0x00;
 
-    pub fn new(file_kind: Kind, program_header_count: u16) Header {
+    pub fn new(file_kind: Kind, program_header_count: u16, code_len: usize) Header {
         return Header{
             .ident = .{ 0x7F, 'E', 'L', 'F', CLASS, ENDIAN, ELF_VERSION, OS_ABI, ABI_VERSION, PADDING, PADDING, PADDING, PADDING, PADDING, PADDING, PADDING },
             .kind = @intFromEnum(file_kind),
             .machine = MACHINE,
             .version = ELF_VERSION,
-            .entry = @sizeOf(ProgramHeader) * program_header_count + @sizeOf(Header),
+            .entry = @sizeOf(ProgramHeader) * program_header_count + @sizeOf(Header) + PROGRAM_START + code_len,
             .phoff = @sizeOf(Header),
             .shoff = 0x00,
             .flags = 0x00,

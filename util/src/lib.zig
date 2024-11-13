@@ -2,8 +2,17 @@ const std = @import("std");
 
 pub var debug_mode = false;
 
-pub fn print(comptime fmt: []const u8, args: anytype) void {
-    if (debug_mode) {
+const LogLevel = enum {
+    Debug,
+    Info,
+};
+
+pub fn print(mode: LogLevel, comptime fmt: []const u8, args: anytype) void {
+    if (mode == .Debug) {
+        if (debug_mode) {
+            std.debug.print(fmt, args);
+        }
+    } else {
         std.debug.print(fmt, args);
     }
 }

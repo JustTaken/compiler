@@ -95,7 +95,7 @@ const Time = struct {
             return switch (self) {
                 .Seconds => "s",
                 .MiliSeconds => "ms",
-                .MicroSeconds => "mis",
+                .MicroSeconds => "mi",
                 .NanoSeconds => "ns",
             };
         }
@@ -134,7 +134,7 @@ const Time = struct {
     }
 
     fn print(self: Time) void {
-        util.print("{d}{s}\n", .{ self.value, self.kind.as_string() });
+        util.print(.Info, "{d}{s}\n", .{ self.value, self.kind.as_string() });
     }
 };
 
@@ -147,13 +147,15 @@ pub fn main() !void {
     const input = command_line.input_path orelse @panic("Missing input file");
     const output = command_line.output_path orelse @panic("Missing output file");
 
-    var arena = mem.Arena.new(3);
-    defer arena.deinit("Main");
+    var arena = mem.Arena.new("Main", 3);
+    defer arena.deinit();
 
     var parser = Parser.new(input, output, &arena);
     defer parser.deinit();
 
     while (parser.next()) {}
+
+    parser.compile();
 
     const end = Time.from_nano((try std.time.Instant.now()).since(start));
     end.print();

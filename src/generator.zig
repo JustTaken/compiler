@@ -5,6 +5,7 @@ const elf = @import("elf.zig");
 
 const Arena = mem.Arena;
 
+const Range = collections.Range;
 const Vec = collections.Vec;
 const Stream = collections.Stream;
 const String = collections.String;
@@ -89,13 +90,13 @@ pub const BinaryOperation = struct {
         switch (self.destination) {
             .Stack => switch (self.source) {
                 .Register => |r| buffer.push(0x50 + r.value()),
-                .Memory => |m| buffer.extend(&.{ 0xFF, 0b01110000 + m.register.value, to_bytes(m.offset)[0] }),
+                .Memory => |m| buffer.extend(&.{ 0xFF, 0b01110000 + m.register.value(), to_bytes(m.offset)[0] }),
                 .Immediate => |i| buffer.mult_extend(&.{ &.{0x68}, to_bytes(i)[0..INT_SIZE] }),
                 .Stack => @panic("Why would you do that?"),
             },
             .Register => |rd| switch (self.source) {
                 .Stack => buffer.push(0x58 + rd.value()),
-                .Register => |rs| buffer.extend(&.{ 0x48, 0x89, 0b11000000 + (rd.value() << 3) + rs.value() }),
+                .Register => |rs| buffer.extend(&.{ 0x48, 0x89, 0b11000000 + (rs.value() << 3) + rd.value() }),
                 .Memory => |m| buffer.extend(&.{ 0x8B, 0b01000000 + (rd.value() << 3) + m.register.value(), to_bytes(m.offset)[0] }),
                 .Immediate => |i| buffer.mult_extend(&.{ &.{0xB8 + rd.value()}, to_bytes(i)[0..INT_SIZE] }),
             },
@@ -112,12 +113,12 @@ pub const BinaryOperation = struct {
         switch (self.destination) {
             .Register => |rd| switch (self.source) {
                 .Register => |rs| buffer.extend(&.{ 0x01, 0b11000000 + (rs.value() << 3) + rd.value() }),
-                .Immedaite => |i| buffer.extend(&.{ 0x83, 0b11000000 + rd.value(), to_bytes(i)[0] }),
+                .Immediate => |i| buffer.extend(&.{ 0x83, 0b11000000 + rd.value(), to_bytes(i)[0] }),
                 .Stack => @panic("Why whould you do that?"),
                 .Memory => @panic("TODO"),
             },
             .Memory => |m| switch (self.source) {
-                .Register => |r| buffer.extend(&.{ 0x01, 0x01000000 + (r.value() << 3) + m.register.value() }),
+                .Register => |r| buffer.extend(&.{ 0x01, 0b01000000 + (r.value() << 3) + m.register.value() }),
                 .Immediate => @panic("TODO"),
                 .Stack => @panic("TODO"),
                 .Memory => @panic("Is that possible?"),
@@ -130,12 +131,12 @@ pub const BinaryOperation = struct {
         switch (self.destination) {
             .Register => |rd| switch (self.source) {
                 .Register => |rs| buffer.extend(&.{ 0x29, 0b11000000 + (rs.value() << 3) + rd.value() }),
-                .Immedaite => |i| buffer.extend(&.{ 0x48, 0b11101000 + rd.value(), to_bytes(i)[0] }),
+                .Immediate => |i| buffer.extend(&.{ 0x48, 0b11101000 + rd.value(), to_bytes(i)[0] }),
                 .Stack => @panic("Why whould you do that?"),
                 .Memory => @panic("TODO"),
             },
             .Memory => |m| switch (self.source) {
-                .Register => |r| buffer.extend(&.{ 0x029, 0x01000000 + (r.value() << 3) + m.register.value() }),
+                .Register => |r| buffer.extend(&.{ 0x029, 0b01000000 + (r.value() << 3) + m.register.value() }),
                 .Immediate => @panic("TODO"),
                 .Stack => @panic("TODO"),
                 .Memory => @panic("Is that possible?"),
@@ -159,6 +160,8 @@ pub const Operation = union(OperationKind) {
     Syscall,
 
     fn write(self: Operation, buffer: *String) void {
+        util.print(.Info, "{}\n", .{self});
+
         switch (self) {
             .Syscall => buffer.extend(&.{ 0x0F, 0x05 }),
             .Ret => buffer.push(0xC3),
@@ -168,7 +171,7 @@ pub const Operation = union(OperationKind) {
                 const i: isize = @intCast(immediate);
                 const offset = i - len - call_instruction_size;
 
-                buffer.mult_extend(&.{ &.{0xE8}, to_bytes(@intCast(offset)) });
+                buffer.mult_extend(&.{ &.{0xE8}, to_bytes(@bitCast(offset))[0..INT_SIZE] });
             },
             .Binary => |binary| switch (binary.kind) {
                 .Mov => binary.write_mov(buffer),
@@ -217,66 +220,76 @@ pub const Operation = union(OperationKind) {
     }
 };
 
-const RegisterManager = struct {
-    free: Vec(Register),
-    used: Vec(Register),
-
-    fn new(arena: *Arena) RegisterManager {
-        const usable_registers = &.{
-            Register.Rax, Register.Rcx, Register.Rdx, Register.Rbx, Register.Rdi,
-        };
-
-        const used = Vec(Register).new(usable_registers.len, arena);
-        var free = Vec(Register).new(usable_registers.len, arena);
-
-        free.extend(usable_registers);
-
-        return RegisterManager{
-            .used = used,
-            .free = free,
-        };
-    }
-
-    pub fn get(self: *RegisterManager) Register {
-        const r = self.free.pop();
-        self.used.push(r);
-
-        return r;
-    }
-
-    pub fn give_back(self: *RegisterManager, r: Register) void {
-        for (self.used.offset(0), 0..) |use, i| {
-            if (use == r) {
-                self.used.remove(i);
-                self.free.push(r);
-
-                return;
-            }
-        }
-    }
-
-    fn deinit(self: *RegisterManager, arena: *Arena) void {
-        self.free.deinit(arena);
-        self.used.deinit(arena);
-    }
-};
-
 pub const Generator = struct {
     stream: Stream,
-    buffer: String,
+    code: String,
+    data: String,
     operations: Vec(Operation),
-    manager: RegisterManager,
+    manager: Manager,
 
     arena: *Arena,
 
+    const Manager = struct {
+        free: Vec(Register),
+        used: Vec(Register),
+        stack: usize,
+
+        fn new(arena: *Arena) Manager {
+            const usable_registers = &.{
+                Register.Rax, Register.Rcx, Register.Rdx, Register.Rbx, Register.Rdi,
+            };
+
+            const used = Vec(Register).new(usable_registers.len, arena);
+            var free = Vec(Register).new(usable_registers.len, arena);
+
+            free.extend(usable_registers);
+
+            return Manager{
+                .used = used,
+                .free = free,
+                .stack = 0,
+            };
+        }
+
+        pub fn get(self: *Manager) Register {
+            const r = self.free.pop();
+            self.used.push(r);
+
+            return r;
+        }
+
+        pub fn give_back(self: *Manager, r: Register) void {
+            for (self.used.offset(0), 0..) |use, i| {
+                if (use == r) {
+                    self.used.remove(i);
+                    self.free.push(r);
+
+                    return;
+                }
+            }
+        }
+
+        fn reset(self: *Manager) void {
+            if (self.used.len > 0) @panic("Should not happen");
+
+            self.stack = 0;
+        }
+
+        fn deinit(self: *Manager, arena: *Arena) void {
+            self.free.deinit(arena);
+            self.used.deinit(arena);
+        }
+    };
+
     pub fn new(stream: Stream, allocator: *Arena) Generator {
-        const arena = allocator.child(mem.PAGE_SIZE >> 1);
+        const arena = allocator.child("Generator", mem.PAGE_SIZE >> 1);
 
         return Generator{
             .stream = stream,
-            .buffer = String.new(512, arena),
+            .code = String.new(512, arena),
+            .data = String.new(1, arena),
             .operations = Vec(Operation).new(16, arena),
-            .manager = RegisterManager.new(arena),
+            .manager = Manager.new(arena),
             .arena = arena,
         };
     }
@@ -287,58 +300,100 @@ pub const Generator = struct {
         }
     }
 
-    pub fn check(self: Generator) void {
-        if (self.manager.used.len > 0) @panic("Should not happen");
+    pub fn push_procedure(self: *Generator) void {
+        var startup_instructions = Vec(Operation).new(2, self.arena);
 
-        util.print("------------------------------------\n", .{});
+        if (self.manager.stack > 0) {
+            startup_instructions.extend(&.{
+                Operation{ .Binary = BinaryOperation{
+                    .kind = BinaryKind.Mov,
+                    .source = Source{ .Register = Register.Rsp },
+                    .destination = Destination{ .Register = Register.Rbp },
+                } },
+                Operation{ .Binary = BinaryOperation{
+                    .kind = BinaryKind.Sub,
+                    .source = Source{ .Immediate = self.manager.stack },
+                    .destination = Destination{ .Register = Register.Rsp },
+                } },
+            });
 
-        for (self.operations.offset(0)) |operation| {
-            util.print("{}\n", .{operation});
+            self.operations.push(Operation{ .Binary = BinaryOperation{
+                .kind = BinaryKind.Mov,
+                .source = Source{ .Register = Register.Rbp },
+                .destination = Destination{ .Register = Register.Rsp },
+            } });
         }
 
-        util.print("------------------------------------\n", .{});
+        self.operations.push(Operation.Ret);
+
+        util.print(.Info, "------------------------------------\n", .{});
+
+        for (startup_instructions.offset(0)) |operation| {
+            operation.write(&self.code);
+        }
+
+        for (self.operations.offset(0)) |operation| {
+            operation.write(&self.code);
+        }
+
+        util.print(.Info, "------------------------------------\n", .{});
+
+        self.manager.reset();
+        self.operations.clear();
+        startup_instructions.deinit(self.arena);
     }
 
-    pub fn generate(self: *Generator) void {
-        self.buffer.clear();
-
+    pub fn generate(self: *Generator, main_procedure_offset: usize) void {
         const program_end = [_]Operation{
-            Operation{ .Call = 0x00 },
+            Operation{ .Call = main_procedure_offset },
             Operation{ .Binary = BinaryOperation{
-                .kind = .Mov,
+                .kind = BinaryKind.Mov,
                 .source = Source{ .Register = Register.Rax },
                 .destination = Destination{ .Register = Register.Rdi },
             } },
             Operation{ .Binary = BinaryOperation{
-                .kind = .Mov,
+                .kind = BinaryKind.Mov,
                 .destination = Destination{ .Register = Register.Rax },
                 .source = Source{ .Immediate = 0x3C },
             } },
-            Operation{ .Syscall = {} },
+            Operation.Syscall,
         };
 
-        for (program_end) |operation| {
-            operation.write(&self.buffer);
-        }
-
-        const elf_header = ElfHeader.new(.Exec, 1);
+        const elf_header = ElfHeader.new(.Exec, 1, self.code.len);
         const program_header = ProgramHeader.new(.Load, &.{
             .Readable,
             .Executable,
-        }, self.buffer.len);
+        }, self.code.len);
 
-        self.buffer.extend(mem.as_bytes(ElfHeader, &elf_header));
-        self.buffer.extend(mem.as_bytes(ProgramHeader, &program_header));
+        for (program_end) |operation| {
+            operation.write(&self.code);
+        }
+
+        const h_size = @sizeOf(ElfHeader);
+        const ph_size = @sizeOf(ProgramHeader);
+
+        self.code.shift(0, h_size + ph_size);
+
+        const code_len = self.code.len;
+
+        self.code.set_len(0);
+
+        self.code.extend(mem.as_bytes(ElfHeader, &elf_header));
+        self.code.extend(mem.as_bytes(ProgramHeader, &program_header));
+
+        self.code.set_len(code_len);
+
+        self.stream.write(self.code) catch @panic("Should not happen");
     }
 
     pub fn deinit(self: *Generator) void {
-        self.generate();
         self.stream.close();
 
         self.manager.deinit(self.arena);
         self.operations.deinit(self.arena);
-        self.buffer.deinit(self.arena);
+        self.data.deinit(self.arena);
+        self.code.deinit(self.arena);
 
-        self.arena.deinit("Generator");
+        self.arena.deinit();
     }
 };

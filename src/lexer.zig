@@ -102,7 +102,7 @@ pub const Token = union(TokenKind) {
     pub const OF: Token = Token{ .Keyword = Keyword.Of };
     pub const TRUE: Token = Token{ .Keyword = Keyword.True };
     pub const FALSE: Token = Token{ .Keyword = Keyword.False };
-    pub const EOF: Token = Token{ .Eof = {} };
+    pub const EOF: Token = Token.Eof;
 
     pub fn eql(self: Token, other: Token) bool {
         switch (self) {
@@ -149,7 +149,7 @@ pub const Lexer = struct {
     arena: *Arena,
 
     pub fn new(stream: Stream, allocator: *Arena) Lexer {
-        const arena = allocator.child(mem.PAGE_SIZE >> 1);
+        const arena = allocator.child("Lexer", mem.PAGE_SIZE >> 1);
 
         var self = Lexer{
             .words = String.new(1024, arena),
@@ -210,7 +210,7 @@ pub const Lexer = struct {
         self.start = self.offset;
 
         if (self.at_end()) {
-            self.current = Token{ .Eof = {} };
+            self.current = Token.EOF;
         } else {
             const c = self.content.value(self.offset);
             self.offset += 1;
@@ -286,7 +286,7 @@ pub const Lexer = struct {
                         }
 
                         if (self.at_end()) {
-                            self.current = Token{ .Eof = {} };
+                            self.current = Token.EOF;
                         }
 
                         self.offset += 1;
@@ -322,7 +322,7 @@ pub const Lexer = struct {
         self.stream.close();
         self.content.deinit(self.arena);
         self.words.deinit(self.arena);
-        self.arena.deinit("Lexer");
+        self.arena.deinit();
     }
 };
 

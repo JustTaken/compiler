@@ -95,7 +95,7 @@ pub const Stream = struct {
 pub fn Array(T: type) type {
     return struct {
         items: [*]T,
-        len: u32,
+        len: usize,
 
         const Self = @This();
         pub fn new(len: u32, arena: *Arena) Self {
@@ -146,15 +146,15 @@ pub fn Vec(T: type) type {
         pub fn push(self: *Self, item: T) void {
             if (self.len >= self.capacity) @panic("Vec does not have enough size");
 
+            defer self.len += 1;
             self.items[self.len] = item;
-            self.len += 1;
         }
 
         pub fn remove(self: *Self, index: usize) void {
             if (index >= self.len) @panic("Out of length");
 
+            defer self.len -= 1;
             mem.copy(T, self.items[index + 1 .. self.len], self.items[index .. self.len - 1]);
-            self.len -= 1;
         }
 
         pub fn extend(self: *Self, items: []const T) void {
@@ -166,6 +166,14 @@ pub fn Vec(T: type) type {
             }
 
             self.len += @intCast(items.len);
+        }
+
+        pub fn shift(self: *Self, index: usize, count: usize) void {
+            if (self.len + count > self.capacity) @panic("Out of length");
+            const len = self.len;
+
+            self.len = @intCast(len + count);
+            mem.back_copy(T, self.items[index..len], self.items[index + count .. self.len]);
         }
 
         pub fn mult_extend(self: *Self, args: []const []const T) void {
@@ -213,6 +221,13 @@ pub fn Vec(T: type) type {
         }
 
         pub fn range(self: *const Self, r: Range) []const T {
+            if (r.start > r.end) @panic("Start boundary greater than end");
+            if (r.end > self.len) @panic("Out of bounds");
+
+            return self.items[r.start..r.end];
+        }
+
+        pub fn mut_range(self: *Self, r: Range) []T {
             if (r.start > r.end) @panic("Start boundary greater than end");
             if (r.end > self.len) @panic("Out of bounds");
 

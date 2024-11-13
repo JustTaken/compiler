@@ -78,7 +78,7 @@ pub const Parser = struct {
     arena: *Arena,
 
     pub fn new(input: []const u8, output: []const u8, allocator: *Arena) Parser {
-        var arena = allocator.child(mem.PAGE_SIZE * 2);
+        var arena = allocator.child("Parser", mem.PAGE_SIZE * 2);
 
         var input_file = arena.create(File, File.open(input) catch @panic("File not found"));
         var output_file = arena.create(File, File.create(output) catch @panic("File not found"));
@@ -395,11 +395,16 @@ pub const Parser = struct {
         }
     }
 
+    pub fn compile(self: *Parser) void {
+        self.checker.generate(&self.lexer.words);
+    }
+
     pub fn deinit(self: *Parser) void {
         self.lexer.deinit();
         self.checker.deinit();
-        self.arena.destroy(File, 2);
-        self.arena.deinit("Parser");
+        self.arena.destroy(File, 1);
+        self.arena.destroy(File, 1);
+        self.arena.deinit();
     }
 };
 
