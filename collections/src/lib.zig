@@ -73,6 +73,30 @@ pub const File = struct {
     }
 };
 
+pub fn read_string(ptr: *anyopaque, buffer: *String) error{AtEnd}!void {
+    const self: *String = @ptrCast(@alignCast(ptr));
+    buffer.extend(self.offset(0));
+}
+
+pub fn write_string(ptr: *anyopaque, buffer: String) error{Fail}!void {
+    const self: *String = @ptrCast(@alignCast(ptr));
+    self.extend(buffer.offset(0));
+}
+
+pub fn close_string(ptr: *anyopaque) void {
+    const self: *String = @ptrCast(@alignCast(ptr));
+    self.clear();
+}
+
+pub fn string_stream(string: *String) Stream {
+    return Stream{
+        .payload = @ptrCast(string),
+        .read_fn = read_string,
+        .write_fn = write_string,
+        .close_fn = close_string,
+    };
+}
+
 pub const Stream = struct {
     payload: *anyopaque,
     read_fn: *const fn (ptr: *anyopaque, buffer: *String) error{AtEnd}!void,

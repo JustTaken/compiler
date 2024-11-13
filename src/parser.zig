@@ -8,6 +8,7 @@ const Lexer = lexer.Lexer;
 const TypeChecker = checker.TypeChecker;
 const Arena = mem.Arena;
 const Stream = collections.Stream;
+const String = collections.String;
 const File = collections.File;
 
 const Token = lexer.Token;
@@ -77,18 +78,12 @@ pub const Parser = struct {
     checker: TypeChecker,
     arena: *Arena,
 
-    pub fn new(input: []const u8, output: []const u8, allocator: *Arena) Parser {
-        var arena = allocator.child("Parser", mem.PAGE_SIZE * 2);
-
-        var input_file = arena.create(File, File.open(input) catch @panic("File not found"));
-        var output_file = arena.create(File, File.create(output) catch @panic("File not found"));
-
-        const input_stream = input_file.stream();
-        const output_stream = output_file.stream();
+    pub fn new(input: Stream, output: Stream, allocator: *Arena) Parser {
+        const arena = allocator.child("Parser", mem.PAGE_SIZE * 2);
 
         return Parser{
-            .lexer = Lexer.new(input_stream, arena),
-            .checker = TypeChecker.new(output_stream, arena),
+            .lexer = Lexer.new(input, arena),
+            .checker = TypeChecker.new(output, arena),
             .arena = arena,
         };
     }
@@ -402,128 +397,81 @@ pub const Parser = struct {
     pub fn deinit(self: *Parser) void {
         self.lexer.deinit();
         self.checker.deinit();
-        self.arena.destroy(File, 1);
-        self.arena.destroy(File, 1);
         self.arena.deinit();
     }
 };
 
 test "basic" {
-    const generator = @import("generator.zig");
-    const buffer = mem.malloc(2);
-    defer mem.free(buffer);
+    var arena = mem.Arena.new("Testing", 3);
+    defer arena.deinit();
 
-    var arena = mem.Arena.new(buffer);
-    var parser = Parser.new("zig-out/basic.lang", "zig-out/out", &arena);
+    var input_file = try collections.File.open("zig-out/basic.lang");
+    var output = String.new(512, &arena);
+    defer output.deinit(&arena);
 
-    const operations: []const []const generator.Operation = &.{ &.{}, &.{}, &.{
-        .{ .Binary = .{
-            .kind = .Mov,
-            .destination = .{ .Register = .Rax },
-            .source = .{ .Immediate = 10 },
-        } },
-        .{ .Binary = .{
-            .kind = .Add,
-            .destination = .{ .Register = .Rax },
-            .source = .{ .Immediate = 10 },
-        } },
-    } };
+    const input_stream = input_file.stream();
+    const output_stream = collections.string_stream(&output);
 
-    var node: usize = 0;
+    var parser = Parser.new(input_stream, output_stream, &arena);
+    defer parser.deinit();
 
-    while (parser.next()) {
-        try util.assert(operations[node].len == parser.checker.generator.operations.len);
-
-        for (parser.checker.generator.operations.offset(0), 0..) |operation, i| {
-            try util.assert(operation.equal(operations[node][i]));
-        }
-
-        node += 1;
-    }
-
-    parser.deinit();
+    while (parser.next()) {}
+    parser.compile();
+    try util.assert(mem.equal(u8, output.offset(0), &.{ 127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 62, 0, 1, 0, 0, 0, 129, 0, 64, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 56, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 5, 0, 0, 0, 120, 0, 0, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 184, 10, 0, 0, 0, 131, 192, 10, 195, 232, 242, 255, 255, 255, 72, 137, 199, 184, 60, 0, 0, 0, 15, 5 }));
 }
 
 test "binary operation" {
-    const generator = @import("generator.zig");
-    const buffer = mem.malloc(2);
-    defer mem.free(buffer);
+    var arena = mem.Arena.new("Testing", 3);
+    defer arena.deinit();
 
-    var arena = mem.Arena.new(buffer);
-    var parser = Parser.new("zig-out/binary.lang", "zig-out/out", &arena);
+    var input_file = try collections.File.open("zig-out/binary.lang");
+    var output = String.new(512, &arena);
+    defer output.deinit(&arena);
 
-    const operations: []const []const generator.Operation = &.{ &.{}, &.{}, &.{
-        .{ .Binary = .{
-            .kind = .Mov,
-            .destination = .{ .Register = .Rdi },
-            .source = .{ .Immediate = 10 },
-        } },
-        .{ .Binary = .{
-            .kind = .Add,
-            .destination = .{ .Register = .Rdi },
-            .source = .{ .Immediate = 10 },
-        } },
-        .{ .Binary = .{
-            .kind = .Mov,
-            .destination = .{ .Register = .Rax },
-            .source = .{ .Register = .Rdi },
-        } },
-        .{ .Binary = .{
-            .kind = .Add,
-            .destination = .{ .Register = .Rax },
-            .source = .{ .Register = .Rdi },
-        } },
-    } };
+    const input_stream = input_file.stream();
+    const output_stream = collections.string_stream(&output);
 
-    var node: usize = 0;
+    var parser = Parser.new(input_stream, output_stream, &arena);
+    defer parser.deinit();
 
-    while (parser.next()) {
-        try util.assert(operations[node].len == parser.checker.generator.operations.len);
-
-        for (parser.checker.generator.operations.offset(0), 0..) |operation, i| {
-            try util.assert(operation.equal(operations[node][i]));
-        }
-
-        node += 1;
-    }
-
-    parser.deinit();
+    while (parser.next()) {}
+    parser.compile();
+    try util.assert(mem.equal(u8, output.offset(0), &.{ 127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 62, 0, 1, 0, 0, 0, 134, 0, 64, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 56, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 5, 0, 0, 0, 120, 0, 0, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 14, 0, 0, 0, 0, 0, 0, 0, 14, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 191, 10, 0, 0, 0, 131, 199, 10, 72, 137, 248, 1, 248, 195, 232, 237, 255, 255, 255, 72, 137, 199, 184, 60, 0, 0, 0, 15, 5 }));
 }
 
 test "function call " {
-    const generator = @import("generator.zig");
-    const buffer = mem.malloc(2);
-    defer mem.free(buffer);
+    var arena = mem.Arena.new("Testing", 3);
+    defer arena.deinit();
 
-    var arena = mem.Arena.new(buffer);
-    var parser = Parser.new("zig-out/call.lang", "zig-out/out", &arena);
+    var input_file = try collections.File.open("zig-out/call.lang");
+    var output = String.new(512, &arena);
+    defer output.deinit(&arena);
 
-    const operations: []const []const generator.Operation = &.{ &.{}, &.{}, &.{
-        .{ .Binary = .{
-            .kind = .Mov,
-            .destination = .{ .Register = .Rax },
-            .source = .{ .Memory = .{ .register = .Rbp, .offset = 0 } },
-        } },
-    }, &.{
-        .{ .Binary = .{
-            .kind = .Mov,
-            .destination = .{ .Stack = {} },
-            .source = .{ .Immediate = 10 },
-        } },
-        .{ .Call = 0 },
-    } };
+    const input_stream = input_file.stream();
+    const output_stream = collections.string_stream(&output);
 
-    var node: usize = 0;
+    var parser = Parser.new(input_stream, output_stream, &arena);
+    defer parser.deinit();
 
-    while (parser.next()) {
-        try util.assert(operations[node].len == parser.checker.generator.operations.len);
-
-        for (parser.checker.generator.operations.offset(0), 0..) |operation, i| {
-            try util.assert(operation.equal(operations[node][i]));
-        }
-
-        node += 1;
-    }
-
-    parser.deinit();
+    while (parser.next()) {}
+    parser.compile();
+    try util.assert(mem.equal(u8, output.offset(0), &.{ 127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 62, 0, 1, 0, 0, 0, 135, 0, 64, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 56, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 5, 0, 0, 0, 120, 0, 0, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 15, 0, 0, 0, 0, 0, 0, 0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 139, 69, 0, 195, 104, 10, 0, 0, 0, 232, 242, 255, 255, 255, 195, 232, 240, 255, 255, 255, 72, 137, 199, 184, 60, 0, 0, 0, 15, 5 }));
 }
+
+// test "type return" {
+//     var arena = mem.Arena.new("Testing", 3);
+//     defer arena.deinit();
+
+//     var input_file = try collections.File.open("zig-out/type_return.lang");
+//     var output = String.new(512, &arena);
+//     defer output.deinit(&arena);
+
+//     const input_stream = input_file.stream();
+//     const output_stream = collections.string_stream(&output);
+
+//     var parser = Parser.new(input_stream, output_stream, &arena);
+//     defer parser.deinit();
+
+//     while (parser.next()) {}
+//     util.print(.Info, "buffer: {d}\n", .{output.offset(0)});
+// }

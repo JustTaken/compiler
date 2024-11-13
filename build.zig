@@ -32,6 +32,16 @@ pub fn build(builder: *Builder) void {
 
     builder.installArtifact(executable);
 
+    const run_executable = builder.addRunArtifact(executable);
+    const run_step = builder.step("run", "Run unit tests");
+
+    if (builder.args) |args| {
+        run_executable.addArgs(args);
+    }
+
+    run_step.dependOn(&run_executable.step);
+    run_step.dependOn(builder.getInstallStep());
+
     const executable_test = builder.addTest(.{
         .root_source_file = builder.path("src/main.zig"),
         .target = target,
@@ -43,6 +53,7 @@ pub fn build(builder: *Builder) void {
     executable_test.root_module.addImport("collections", collections.module("collections"));
 
     const run_tests = builder.addRunArtifact(executable_test);
+
     const test_step = builder.step("test", "Run unit tests");
 
     test_step.dependOn(&run_tests.step);

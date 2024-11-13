@@ -747,6 +747,7 @@ pub const TypeChecker = struct {
             const name = self.ranges.pop();
 
             if (!mem.equal(u8, words.range(name), words.range(inner.fields.items[i].name))) {
+                util.print(.Info, "{s} - {s}\n", .{ words.range(name), words.range(inner.fields.items[i].name) });
                 @panic("For now the type construction have to be in the same order as the definitino");
             }
 

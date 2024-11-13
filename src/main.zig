@@ -1,6 +1,7 @@
 const std = @import("std");
 const util = @import("util");
 const mem = @import("mem");
+const collections = @import("collections");
 
 const Parser = @import("parser.zig").Parser;
 const Arena = mem.Arena;
@@ -150,7 +151,13 @@ pub fn main() !void {
     var arena = mem.Arena.new("Main", 3);
     defer arena.deinit();
 
-    var parser = Parser.new(input, output, &arena);
+    var input_file = try collections.File.open(input);
+    var output_file = try collections.File.create(output);
+
+    const input_stream = input_file.stream();
+    const output_stream = output_file.stream();
+
+    var parser = Parser.new(input_stream, output_stream, &arena);
     defer parser.deinit();
 
     while (parser.next()) {}

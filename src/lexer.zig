@@ -327,8 +327,8 @@ pub const Lexer = struct {
 };
 
 test "basic" {
-    const buffer = mem.malloc(1);
-    var arena = Arena.new(buffer);
+    var arena = Arena.new("Testing", 1);
+    defer arena.deinit();
 
     var file = try collections.File.open("zig-out/basic.lang");
     const stream = file.stream();
@@ -336,6 +336,7 @@ test "basic" {
     const tokens: []const Token = &.{ Token.TYPE, Token.IDEN, Token.EQUAL, Token.NUMBER, Token.SEMICOLON, Token.TYPE, Token.IDEN, Token.EQUAL, Token.NUMBER, Token.SEMICOLON, Token.PROC, Token.IDEN, Token.PARENTESISLEFT, Token.PARENTESISRIGHT, Token.DOUBLECOLON, Token.IDEN, Token.BRACELEFT, Token.LET, Token.IDEN, Token.DOUBLECOLON, Token.IDEN, Token.EQUAL, Token.NUMBER, Token.PLUS, Token.NUMBER, Token.SEMICOLON, Token.IDEN, Token.BRACERIGHT, Token.EOF };
 
     var lexer = Lexer.new(stream, &arena);
+    defer lexer.deinit();
 
     for (tokens) |token| {
         try util.assert(lexer.current.eql(token));
@@ -345,8 +346,8 @@ test "basic" {
 }
 
 test "function call" {
-    const buffer = mem.malloc(1);
-    var arena = Arena.new(buffer);
+    var arena = Arena.new("Testing", 1);
+    defer arena.deinit();
 
     var file = try collections.File.open("zig-out/call.lang");
 
@@ -354,6 +355,7 @@ test "function call" {
     const tokens: []const Token = &.{ Token.TYPE, Token.IDEN, Token.EQUAL, Token.NUMBER, Token.SEMICOLON, Token.TYPE, Token.IDEN, Token.EQUAL, Token.NUMBER, Token.SEMICOLON, Token.PROC, Token.IDEN, Token.PARENTESISLEFT, Token.IDEN, Token.DOUBLECOLON, Token.IDEN, Token.PARENTESISRIGHT, Token.DOUBLECOLON, Token.IDEN, Token.BRACELEFT, Token.IDEN, Token.BRACERIGHT, Token.PROC, Token.IDEN, Token.PARENTESISLEFT, Token.PARENTESISRIGHT, Token.DOUBLECOLON, Token.IDEN, Token.BRACELEFT, Token.LET, Token.IDEN, Token.DOUBLECOLON, Token.IDEN, Token.EQUAL, Token.IDEN, Token.PARENTESISLEFT, Token.NUMBER, Token.PARENTESISRIGHT, Token.SEMICOLON, Token.IDEN, Token.BRACERIGHT };
 
     var lexer = Lexer.new(stream, &arena);
+    defer lexer.deinit();
 
     for (tokens) |token| {
         try util.assert(lexer.current.eql(token));

@@ -78,7 +78,6 @@ pub const Destination = union(DestinationKind) {
 };
 
 const BYTE_SIZE: usize = 1;
-const INT_SIZE: usize = 4;
 
 pub const BinaryKind = enum { Mov, Add, Sub, Mul };
 pub const BinaryOperation = struct {
@@ -91,18 +90,18 @@ pub const BinaryOperation = struct {
             .Stack => switch (self.source) {
                 .Register => |r| buffer.push(0x50 + r.value()),
                 .Memory => |m| buffer.extend(&.{ 0xFF, 0b01110000 + m.register.value(), to_bytes(m.offset)[0] }),
-                .Immediate => |i| buffer.mult_extend(&.{ &.{0x68}, to_bytes(i)[0..INT_SIZE] }),
+                .Immediate => |i| buffer.mult_extend(&.{ &.{0x68}, to_bytes(i)[0 .. mem.BASE_SIZE >> 1] }),
                 .Stack => @panic("Why would you do that?"),
             },
             .Register => |rd| switch (self.source) {
                 .Stack => buffer.push(0x58 + rd.value()),
                 .Register => |rs| buffer.extend(&.{ 0x48, 0x89, 0b11000000 + (rs.value() << 3) + rd.value() }),
                 .Memory => |m| buffer.extend(&.{ 0x8B, 0b01000000 + (rd.value() << 3) + m.register.value(), to_bytes(m.offset)[0] }),
-                .Immediate => |i| buffer.mult_extend(&.{ &.{0xB8 + rd.value()}, to_bytes(i)[0..INT_SIZE] }),
+                .Immediate => |i| buffer.mult_extend(&.{ &.{0xB8 + rd.value()}, to_bytes(i)[0 .. mem.BASE_SIZE >> 1] }),
             },
             .Memory => |m| switch (self.source) {
                 .Register => |r| buffer.extend(&.{ 0x89, 0b01000000 + (r.value() << 3) + m.register.value(), to_bytes(m.offset)[0] }),
-                .Immediate => |i| buffer.mult_extend(&.{ &.{ 0xC7, 0b01000000 + m.register.value(), to_bytes(m.offset)[0] }, to_bytes(i)[0..INT_SIZE] }),
+                .Immediate => |i| buffer.mult_extend(&.{ &.{ 0xC7, 0b01000000 + m.register.value(), to_bytes(m.offset)[0] }, to_bytes(i)[0 .. mem.BASE_SIZE >> 1] }),
                 .Stack => @panic("Should not happen"),
                 .Memory => @panic("Should not happen"),
             },
@@ -171,7 +170,7 @@ pub const Operation = union(OperationKind) {
                 const i: isize = @intCast(immediate);
                 const offset = i - len - call_instruction_size;
 
-                buffer.mult_extend(&.{ &.{0xE8}, to_bytes(@bitCast(offset))[0..INT_SIZE] });
+                buffer.mult_extend(&.{ &.{0xE8}, to_bytes(@bitCast(offset))[0 .. mem.BASE_SIZE >> 1] });
             },
             .Binary => |binary| switch (binary.kind) {
                 .Mov => binary.write_mov(buffer),
@@ -382,7 +381,6 @@ pub const Generator = struct {
         self.code.extend(mem.as_bytes(ProgramHeader, &program_header));
 
         self.code.set_len(code_len);
-
         self.stream.write(self.code) catch @panic("Should not happen");
     }
 
