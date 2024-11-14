@@ -22,8 +22,8 @@ pub const Logger = struct {
 
     pub var level: Level = .None;
 
-    pub fn set_buffer(arena: *Arena) void {
-        buffer = String.new(mem.PAGE_SIZE, arena);
+    pub fn set_buffer(size: u32, arena: *Arena) void {
+        buffer = String.new(size, arena);
     }
 
     pub fn format(comptime fmt: []const u8, args: anytype) void {

@@ -3,6 +3,7 @@ const util = @import("util");
 
 pub const PAGE_SIZE: u32 = std.mem.page_size;
 pub const BASE_SIZE: u32 = @sizeOf(usize);
+pub const BYTE_SIZE: usize = 1;
 
 pub fn malloc(pages: usize) []u8 {
     const buffer = std.posix.mmap(

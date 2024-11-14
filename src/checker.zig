@@ -381,6 +381,16 @@ const Constant = union(ConstantKind) {
                 } });
             },
             .Call => |call| {
+                const return_stack = call.procedure.inner.size > 4;
+
+                if (return_stack) {
+                    gen.operations.push(Operation{ .Binary = BinaryOperation{
+                        .kind = BinaryOperationKind.Sub,
+                        .source = Source{ .Immediate = call.procedure.inner.size },
+                        .destination = Destination{ .Register = Register.Rsp },
+                    } });
+                }
+
                 for (call.arguments.offset(0)) |argument| {
                     argument.evaluate(.Mov, Destination.Stack, gen, change_count);
                 }
@@ -442,12 +452,11 @@ const Constant = union(ConstantKind) {
             .Ref => |constant| {
                 const dst = destination orelse @panic("Should not happen");
 
-                if (constant.get_source()) |source| {
+                if (constant.get_source()) |_| {
                     constant.evaluate(operation, dst, gen, change_count);
 
                     if (constant.get_usage() == 0) {
-                        gen.give_back(source);
-                        constant.set_source(null);
+                        constant.unuse(gen);
                     }
                 } else if (constant.get_usage() > 1) {
                     const register = gen.manager.get();
@@ -457,6 +466,49 @@ const Constant = union(ConstantKind) {
                     constant.evaluate(operation, dst, gen, false);
                 } else {
                     constant.evaluate(operation, dst, gen, change_count);
+                }
+            },
+        }
+    }
+
+    fn unuse(self: Constant, gen: *Generator) void {
+        switch (self) {
+            .Parameter, .Number, .Procedure, .Type => {},
+            .Ref => |constant| constant.unuse(gen),
+            .FieldAcess => |field| {
+                if (field.source) |source| {
+                    gen.give_back(source);
+                    field.source = null;
+                }
+            },
+            .Call => |call| {
+                if (call.procedure.inner.size > 4) {
+                    gen.operations.push(Operation{ .Binary = BinaryOperation{
+                        .kind = BinaryOperationKind.Add,
+                        .source = Source{ .Immediate = call.procedure.inner.size },
+                        .destination = Destination{ .Register = Register.Rsp },
+                    } });
+                } else {
+                    gen.give_back(Source{ .Regsiter = Register.Rax });
+                }
+            },
+            .Unary => |unary| unary.constant.unuse(gen),
+            .Binary => |binary| {
+                if (binary.source) |source| {
+                    gen.give_back(source);
+                    binary.source = null;
+                }
+            },
+            .Construct => |construct| {
+                if (construct.source) |source| {
+                    gen.give_back(source);
+                    construct.source = null;
+                }
+            },
+            .Scope => |scope| {
+                if (scope.source) |source| {
+                    gen.give_back(source);
+                    scope.source = null;
                 }
             },
         }
@@ -800,6 +852,7 @@ pub const TypeChecker = struct {
         }
 
         _ = self.ranges.pop();
+
         self.constants.push(Constant{ .Construct = self.arena.create(ConstantConstruct, ConstantConstruct{
             .constants = constants,
             .inner = inner,

@@ -6,6 +6,8 @@ const collections = @import("collections");
 const Parser = @import("parser.zig").Parser;
 const Arena = mem.Arena;
 
+const DEFAULT_PATH: [:0]const u8 = "a.out";
+
 const CommandLineArgument = struct {
     log: util.Logger.Level,
     input_path: ?[]const u8,
@@ -160,12 +162,12 @@ pub fn main() !void {
     util.Logger.level = command_line.log;
 
     const input = command_line.input_path orelse @panic("Missing input file");
-    const output = command_line.output_path orelse @panic("Missing output file");
+    const output = command_line.output_path orelse DEFAULT_PATH;
 
     var arena = mem.Arena.new("Main", 4);
     defer arena.deinit();
 
-    util.Logger.set_buffer(&arena);
+    util.Logger.set_buffer(mem.PAGE_SIZE, &arena);
     defer util.Logger.deinit(&arena);
 
     var input_file = try collections.File.open(input);

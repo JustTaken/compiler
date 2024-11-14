@@ -25,6 +25,7 @@ pub const Register = enum(u8) {
     fn value(self: Register) u8 {
         return @intFromEnum(self);
     }
+
     pub fn print(self: Register, formater: util.Formater) void {
         switch (self) {
             .Rax => formater("Register::Rax", .{}),
@@ -109,8 +110,6 @@ pub const Destination = union(DestinationKind) {
         };
     }
 };
-
-const BYTE_SIZE: usize = 1;
 
 pub const BinaryKind = enum { Mov, Add, Sub, Mul };
 pub const BinaryOperation = struct {
@@ -314,7 +313,7 @@ pub const Generator = struct {
                     self.used.remove(i);
                     self.free.push(r);
 
-                    return;
+                    break;
                 }
             }
         }
