@@ -489,7 +489,7 @@ const Constant = union(ConstantKind) {
                         .destination = Destination{ .Register = Register.Rsp },
                     } });
                 } else {
-                    gen.give_back(Source{ .Regsiter = Register.Rax });
+                    gen.give_back(Source{ .Register = Register.Rax });
                 }
             },
             .Unary => |unary| unary.constant.unuse(gen),
@@ -506,9 +506,8 @@ const Constant = union(ConstantKind) {
                 }
             },
             .Scope => |scope| {
-                if (scope.source) |source| {
-                    gen.give_back(source);
-                    scope.source = null;
+                if (scope.return_value) |constant| {
+                    constant.unuse(gen);
                 }
             },
         }

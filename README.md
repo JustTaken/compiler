@@ -16,7 +16,7 @@ binary operations that are known to be know at compile time.
 Why? because this is a design choice.
 
 # Status
-This is made to compile made up language, and the programs that runs without any
+This is made to compile a made up language, and the programs that runs without any
 problems are just programs that use integers and do specific and restricted
 binary operations with then. Like:
 
@@ -24,10 +24,10 @@ binary operations with then. Like:
 type i32 = 4;
 
 proc main(): i32 {
-    let a = 10 + 10;
+    let a: i32 = 10 + 10;
 
-    let c = {
-        let b = a + 50;
+    let c: i32 = {
+        let b: i32 = a + 50;
         b
     };
 
