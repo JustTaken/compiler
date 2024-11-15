@@ -23,7 +23,7 @@ pub const Range = struct {
     }
 };
 
-pub const Formater = *const fn (comptime fmt: []const u8, args: anytype) void;
+pub const Formater = *const fn (comptime fmt: []const u8, args: anytype) error{Overflow}!void;
 pub const Logger = struct {
     pub const Level = enum(usize) {
         None,
@@ -48,7 +48,7 @@ pub const Logger = struct {
         normal_buffer = try String.new(size, arena);
     }
 
-    pub fn format(comptime fmt: []const u8, args: anytype) void {
+    pub fn format(comptime fmt: []const u8, args: anytype) error{Overflow}!void {
         const ArgsType = @TypeOf(args);
         const args_type_info = @typeInfo(ArgsType);
 
@@ -61,9 +61,10 @@ pub const Logger = struct {
 
         inline while (comptime iter.next()) |char| {
             if (char == '{') {
-                if (comptime iter.next().? != '}') @panic("TODO: support other types of format");
+                if (comptime iter.next().? != '}') @panic("TODO: support other formats");
                 if (arg_index >= args_type_info.Struct.fields.len) {
-                    buffer.extend("\"ERROR: NO MORE ARGUMENTS\"");
+                    buffer.extend("\"ERROR: NO MORE ARGUMENTS\"") catch return error.Overflow;
+
                     continue;
                 }
 
@@ -71,20 +72,20 @@ pub const Logger = struct {
                 const type_info = @typeInfo(field.type);
 
                 switch (type_info) {
-                    .Struct, .Union, .Enum => @field(args, field.name).print(format),
-                    .ComptimeInt, .Int => parse_int(@intCast(@field(args, field.name))) catch @panic("TODO"),
+                    .Struct, .Union, .Enum => try @field(args, field.name).print(format),
+                    .ComptimeInt, .Int => parse_int(@intCast(@field(args, field.name))),
                     .Pointer => |p| {
                         const child_info = @typeInfo(p.child);
                         switch (child_info) {
                             .Array => {
                                 if (!mem.equal(u8, @typeName(child_info.Array.child), @typeName(u8))) @panic("TODO");
 
-                                buffer.extend(@field(args, field.name)) catch @panic("TODO");
+                                buffer.extend(@field(args, field.name)) catch return error.Overflow;
                             },
                             .Int => |i| {
-                                if (i.bits != 8) @panic("Should not happen");
+                                if (i.bits != 8) @panic("TODO");
 
-                                buffer.extend(@field(args, field.name)) catch @panic("TODO");
+                                buffer.extend(@field(args, field.name)) catch return error.Overflow;
                             },
                             else => @panic("TODO"),
                         }
@@ -94,10 +95,7 @@ pub const Logger = struct {
 
                 arg_index += 1;
             } else {
-                buffer.push(char) catch {
-                    buffer.clear();
-                    buffer.extend("BUFFER OVERFLOW") catch unreachable;
-                };
+                buffer.push(char) catch return error.Overflow;
             }
         }
     }
@@ -106,21 +104,38 @@ pub const Logger = struct {
         if (@intFromEnum(mode) <= @intFromEnum(level)) {
             buffer = if (normal_buffer.capacity == 0) backup_buffer else normal_buffer;
 
-            format(fmt, args);
+            if (format(fmt, args)) {
+                buffer.push('\n') catch overflow();
+            } else |_| {
+                overflow();
+            }
 
             const stderr = std.io.getStdErr().writer();
-            buffer.push('\n') catch @panic("TODO");
             stderr.writeAll(buffer.offset(0) catch unreachable) catch @panic("TODO");
 
             buffer.clear();
         }
     }
 
+    fn overflow() void {
+        if (buffer.capacity < 1024) @panic("TODO");
+
+        const message = "BUFFER OVERFLOW!! START OF MESSAGE: {";
+        const overflow_len_preview: usize = 50;
+
+        buffer.set_len(overflow_len_preview) catch unreachable;
+        buffer.shift_right(0, message.len) catch unreachable;
+        buffer.set_len(0) catch unreachable;
+        buffer.extend(message) catch unreachable;
+        buffer.set_len(overflow_len_preview + message.len) catch unreachable;
+        buffer.extend("}\n") catch unreachable;
+    }
+
     pub fn deinit(arena: *Arena) void {
         normal_buffer.deinit(arena);
     }
 
-    pub fn parse_int(i: isize) error{OutOfBounds}!void {
+    pub fn parse_int(i: isize) void {
         var b: [20]u8 = undefined;
 
         var k: usize = 0;
@@ -147,7 +162,7 @@ pub const Logger = struct {
         }
 
         for (0..k) |index| {
-            try buffer.push(b[k - index - 1]);
+            buffer.push(b[k - index - 1]) catch overflow();
         }
     }
 };

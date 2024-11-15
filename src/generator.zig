@@ -25,16 +25,16 @@ pub const Register = enum(u8) {
         return @intFromEnum(self);
     }
 
-    pub fn print(self: Register, formater: util.Formater) void {
+    pub fn print(self: Register, formater: util.Formater) error{Overflow}!void {
         switch (self) {
-            .Rax => formater("Register::Rax", .{}),
-            .Rcx => formater("Register::Rcx", .{}),
-            .Rdx => formater("Register::Rdx", .{}),
-            .Rbx => formater("Register::Rbx", .{}),
-            .Rsp => formater("Register::Rsp", .{}),
-            .Rbp => formater("Register::Rbp", .{}),
-            .Rsi => formater("Register::Rsi", .{}),
-            .Rdi => formater("Register::Rdi", .{}),
+            .Rax => try formater("Register::Rax", .{}),
+            .Rcx => try formater("Register::Rcx", .{}),
+            .Rdx => try formater("Register::Rdx", .{}),
+            .Rbx => try formater("Register::Rbx", .{}),
+            .Rsp => try formater("Register::Rsp", .{}),
+            .Rbp => try formater("Register::Rbp", .{}),
+            .Rsi => try formater("Register::Rsi", .{}),
+            .Rdi => try formater("Register::Rdi", .{}),
         }
     }
 };
@@ -57,8 +57,8 @@ pub const Memory = struct {
     register: Register,
     offset: Offset,
 
-    pub fn print(self: Memory, formater: util.Formater) void {
-        formater("Memory({}, Offset({}))", .{ self.register, self.offset });
+    pub fn print(self: Memory, formater: util.Formater) error{Overflow}!void {
+        try formater("Memory({}, Offset({}))", .{ self.register, self.offset });
     }
 };
 
@@ -73,12 +73,12 @@ pub const Source = union(SourceKind) {
         return @as(SourceKind, self) == other;
     }
 
-    pub fn print(self: Source, formater: util.Formater) void {
+    pub fn print(self: Source, formater: util.Formater) error{Overflow}!void {
         return switch (self) {
-            .Register => |r| formater("Source::Register({})", .{r}),
-            .Memory => |m| formater("Source::Memory({})", .{m}),
-            .Immediate => |i| formater("Source::Immediate({})", .{i}),
-            .Stack => formater("Source::Stack", .{}),
+            .Register => |r| try formater("Source::Register({})", .{r}),
+            .Memory => |m| try formater("Source::Memory({})", .{m}),
+            .Immediate => |i| try formater("Source::Immediate({})", .{i}),
+            .Stack => try formater("Source::Stack", .{}),
         };
     }
 };
@@ -101,11 +101,11 @@ pub const Destination = union(DestinationKind) {
         };
     }
 
-    pub fn print(self: Destination, formater: util.Formater) void {
+    pub fn print(self: Destination, formater: util.Formater) error{Overflow}!void {
         return switch (self) {
-            .Register => |r| formater("Destination::Register({})", .{r}),
-            .Memory => |m| formater("Destination::Memory({})", .{m}),
-            .Stack => formater("Destination::Stack", .{}),
+            .Register => |r| try formater("Destination::Register({})", .{r}),
+            .Memory => |m| try formater("Destination::Memory({})", .{m}),
+            .Stack => try formater("Destination::Stack", .{}),
         };
     }
 };
@@ -116,12 +116,12 @@ pub const BinaryOperation = struct {
     source: Source,
     destination: Destination,
 
-    pub fn print(self: BinaryOperation, formater: util.Formater) void {
+    pub fn print(self: BinaryOperation, formater: util.Formater) error{Overflow}!void {
         switch (self.kind) {
-            .Mov => formater("BinaryOperation::Mov({} -> {})", .{ self.source, self.destination }),
-            .Add => formater("BinaryOperation::Add({} -> {})", .{ self.source, self.destination }),
-            .Sub => formater("BinaryOperation::Sub({} -> {})", .{ self.source, self.destination }),
-            .Mul => formater("BinaryOperation::Mul({} -> {})", .{ self.source, self.destination }),
+            .Mov => try formater("BinaryOperation::Mov({} -> {})", .{ self.source, self.destination }),
+            .Add => try formater("BinaryOperation::Add({} -> {})", .{ self.source, self.destination }),
+            .Sub => try formater("BinaryOperation::Sub({} -> {})", .{ self.source, self.destination }),
+            .Mul => try formater("BinaryOperation::Mul({} -> {})", .{ self.source, self.destination }),
         }
     }
 
@@ -198,12 +198,12 @@ pub const Operation = union(OperationKind) {
     Ret,
     Syscall,
 
-    pub fn print(self: Operation, formater: util.Formater) void {
+    pub fn print(self: Operation, formater: util.Formater) error{Overflow}!void {
         switch (self) {
-            .Syscall => formater("Operation::Syscall", .{}),
-            .Ret => formater("Operation::Ret", .{}),
-            .Call => |immediate| formater("Operation::Call(Offset({}))", .{immediate}),
-            .Binary => |binary| formater("Operation::Binary({})", .{binary}),
+            .Syscall => try formater("Operation::Syscall", .{}),
+            .Ret => try formater("Operation::Ret", .{}),
+            .Call => |immediate| try formater("Operation::Call(Offset({}))", .{immediate}),
+            .Binary => |binary| try formater("Operation::Binary({})", .{binary}),
         }
     }
 

@@ -90,7 +90,7 @@ const CommandLineArgument = struct {
                 .Path => {
                     if (input_path) |_| return Error.MoreThanOneInputPath;
                     input_path = arg;
-                }
+                },
             }
 
             i += 1;
@@ -167,7 +167,7 @@ pub fn main() !void {
 
     util.Logger.level = command_line.log;
 
-    const input = command_line.input_path orelse @panic("Missing input file");
+    const input = command_line.input_path orelse return error.MissingInputFile;
     const output = command_line.output_path orelse DEFAULT_PATH;
 
     var arena = try mem.Arena.new("Main", 4);
