@@ -1,8 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const String = @import("collections").String;
-
 const PROGRAM_START: usize = 0x400_000;
 const ARCH_SIZE: usize = @sizeOf(usize);
 

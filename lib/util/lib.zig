@@ -6,6 +6,23 @@ const String = collections.String;
 const Iter = collections.Iter;
 const Arena = mem.Arena;
 
+pub const Range = struct {
+    start: u32,
+    end: u32,
+
+    pub fn new(start: u32, end: u32) Range {
+        return Range{
+            .start = start,
+            .end = end,
+        };
+    }
+
+    pub fn reset(self: *Range) void {
+        self.start = 0;
+        self.end = 0;
+    }
+};
+
 pub const Formater = *const fn (comptime fmt: []const u8, args: anytype) void;
 pub const Logger = struct {
     pub const Level = enum(usize) {
@@ -14,16 +31,21 @@ pub const Logger = struct {
         Debug,
     };
 
-    pub var buffer: String = String{
+    var normal_buffer: String = String{
         .items = undefined,
         .len = 0,
         .capacity = 0,
     };
 
+    var backup_array: [1024]u8 = undefined;
+    var backup_buffer = collections.string_from_buffer(&backup_array);
+
+    var buffer: String = undefined;
+
     pub var level: Level = .None;
 
-    pub fn set_buffer(size: u32, arena: *Arena) void {
-        buffer = String.new(size, arena);
+    pub fn set_buffer(size: u32, arena: *Arena) error{OutOfMemory}!void {
+        normal_buffer = try String.new(size, arena);
     }
 
     pub fn format(comptime fmt: []const u8, args: anytype) void {
@@ -39,70 +61,66 @@ pub const Logger = struct {
 
         inline while (comptime iter.next()) |char| {
             if (char == '{') {
-                if (comptime iter.next().? != '}') @panic("Do not support other formats for now");
-                if (arg_index >= args_type_info.Struct.fields.len) @panic("wrong number of arguments");
+                if (comptime iter.next().? != '}') @panic("TODO: support other types of format");
+                if (arg_index >= args_type_info.Struct.fields.len) {
+                    buffer.extend("\"ERROR: NO MORE ARGUMENTS\"");
+                    continue;
+                }
 
                 const field = args_type_info.Struct.fields[arg_index];
                 const type_info = @typeInfo(field.type);
 
                 switch (type_info) {
                     .Struct, .Union, .Enum => @field(args, field.name).print(format),
-                    .ComptimeInt, .Int => parse_int(@intCast(@field(args, field.name))),
+                    .ComptimeInt, .Int => parse_int(@intCast(@field(args, field.name))) catch @panic("TODO"),
                     .Pointer => |p| {
                         const child_info = @typeInfo(p.child);
                         switch (child_info) {
                             .Array => {
-                                if (!mem.equal(u8, @typeName(child_info.Array.child), @typeName(u8))) {
-                                    @panic("Should not happen");
-                                }
-                                buffer.extend(@field(args, field.name));
+                                if (!mem.equal(u8, @typeName(child_info.Array.child), @typeName(u8))) @panic("TODO");
+
+                                buffer.extend(@field(args, field.name)) catch @panic("TODO");
                             },
                             .Int => |i| {
                                 if (i.bits != 8) @panic("Should not happen");
 
-                                buffer.extend(@field(args, field.name));
+                                buffer.extend(@field(args, field.name)) catch @panic("TODO");
                             },
-                            else => {
-                                std.debug.print("{}\n", .{child_info});
-                                @panic("Should not happen");
-                            },
+                            else => @panic("TODO"),
                         }
                     },
-                    else => {
-                        unreachable;
-                    },
+                    else => @panic("TODO"),
                 }
 
                 arg_index += 1;
             } else {
-                buffer.push(char);
+                buffer.push(char) catch {
+                    buffer.clear();
+                    buffer.extend("BUFFER OVERFLOW") catch unreachable;
+                };
             }
         }
     }
 
-    pub fn print(mode: Level, comptime fmt: []const u8, args: anytype) void {
-        if (buffer.len >= buffer.capacity) {
-            buffer.clear();
-
-            return;
-        }
-
+    pub fn printf(mode: Level, comptime fmt: []const u8, args: anytype) void {
         if (@intFromEnum(mode) <= @intFromEnum(level)) {
+            buffer = if (normal_buffer.capacity == 0) backup_buffer else normal_buffer;
+
             format(fmt, args);
 
             const stderr = std.io.getStdErr().writer();
-            buffer.push('\n');
-            stderr.writeAll(buffer.offset(0)) catch @panic("Should not happen");
+            buffer.push('\n') catch @panic("TODO");
+            stderr.writeAll(buffer.offset(0) catch unreachable) catch @panic("TODO");
 
             buffer.clear();
         }
     }
 
     pub fn deinit(arena: *Arena) void {
-        buffer.deinit(arena);
+        normal_buffer.deinit(arena);
     }
 
-    pub fn parse_int(i: isize) void {
+    pub fn parse_int(i: isize) error{OutOfBounds}!void {
         var b: [20]u8 = undefined;
 
         var k: usize = 0;
@@ -129,12 +147,12 @@ pub const Logger = struct {
         }
 
         for (0..k) |index| {
-            buffer.push(b[k - index - 1]);
+            try buffer.push(b[k - index - 1]);
         }
     }
 };
 
-pub const print = Logger.print;
+pub const print = Logger.printf;
 
 pub fn convert(input: [*:0]u8) []const u8 {
     var len: usize = 0;

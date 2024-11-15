@@ -28,6 +28,8 @@ const CommandLineArgument = struct {
         Argument,
         Command,
         DebugFlagCombination,
+        MoreThanOneInputPath,
+        MoreThanOneOutputPath,
     };
 
     fn check_argument(arg: []const u8) error{Argument}!ArgumentKind {
@@ -74,6 +76,7 @@ const CommandLineArgument = struct {
 
                         const output_arg = util.convert(std.os.argv[i]);
                         if (try check_argument(output_arg) != ArgumentKind.Path) return Error.Argument;
+                        if (output_path) |_| return Error.MoreThanOneOutputPath;
 
                         output_path = output_arg;
                     },
@@ -84,7 +87,10 @@ const CommandLineArgument = struct {
                         if (log) |_| return Error.DebugFlagCombination else log = .Info;
                     },
                 },
-                .Path => input_path = arg,
+                .Path => {
+                    if (input_path) |_| return Error.MoreThanOneInputPath;
+                    input_path = arg;
+                }
             }
 
             i += 1;
@@ -164,24 +170,24 @@ pub fn main() !void {
     const input = command_line.input_path orelse @panic("Missing input file");
     const output = command_line.output_path orelse DEFAULT_PATH;
 
-    var arena = mem.Arena.new("Main", 4);
+    var arena = try mem.Arena.new("Main", 4);
     defer arena.deinit();
 
-    util.Logger.set_buffer(mem.PAGE_SIZE, &arena);
+    try util.Logger.set_buffer(mem.PAGE_SIZE, &arena);
     defer util.Logger.deinit(&arena);
 
     var input_file = try collections.File.open(input);
-    var output_file = try collections.File.create(output);
+    defer input_file.close();
 
-    const input_stream = input_file.stream();
-    const output_stream = output_file.stream();
-
-    var parser = Parser.new(input_stream, output_stream, &arena);
+    var parser = try Parser.new(input_file.stream(), &arena);
     defer parser.deinit();
 
     while (parser.next()) {}
 
-    parser.compile();
+    var output_file = try collections.File.create(output);
+    defer output_file.close();
+
+    parser.compile(output_file.stream());
 
     const end = Time.from_nano((try std.time.Instant.now()).since(start));
     end.print();

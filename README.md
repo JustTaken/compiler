@@ -6,11 +6,10 @@ lot of code that is not necessary. For example, this one does not replace
 binary operations that are known to be know at compile time.
 
 ```rust
-    let a = 10 + 10;
-    // whill be transformed into
+let a = 10 + 10; // what the user types
 
-    let a = 20; // with llvm
-    let a = 10 + 10; // with this compiler
+let a = 20; // with production compilers
+let a = 10 + 10; // with this compiler
 ```
 
 Why? because this is a design choice.

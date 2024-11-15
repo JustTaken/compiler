@@ -4,7 +4,7 @@ const mem = @import("mem");
 
 const Arena = mem.Arena;
 const File = util.File;
-const Range = collections.Range;
+const Range = util.Range;
 const String = collections.String;
 const Stream = collections.Stream;
 
@@ -23,20 +23,20 @@ pub const Keyword = enum {
         }
     }
     fn from_string(string: []const u8) ?Keyword {
-        if (string.len == 0) return null;
+        if (string.len <= 1) return null;
 
         switch (string[0]) {
             't' => {
-                if (mem.equal(u8, string, "type")) return .Type else return null;
+                if (mem.equal(u8, string[1..], "ype")) return .Type else return null;
             },
             'p' => {
-                if (mem.equal(u8, string, "proc")) return .Procedure else return null;
+                if (mem.equal(u8, string[1..], "roc")) return .Procedure else return null;
             },
             'm' => {
-                if (mem.equal(u8, string, "mut")) return .Mut else return null;
+                if (mem.equal(u8, string[1..], "ut")) return .Mut else return null;
             },
             'l' => {
-                if (mem.equal(u8, string, "let")) return .Let else return null;
+                if (mem.equal(u8, string[1..], "et")) return .Let else return null;
             },
             else => return null,
         }
@@ -49,8 +49,8 @@ pub const Symbol = enum {
     ParentesisRight,
     Semicolon,
     DoubleColon,
-    CurlyBraceLeft,
-    CurlyBraceRight,
+    CurlyBracketLeft,
+    CurlyBracketRight,
     Comma,
     Arrow,
     Dot,
@@ -62,8 +62,8 @@ pub const Symbol = enum {
             .ParentesisRight => formater("Symbol::ParentesisRight", .{}),
             .Semicolon => formater("Symbol::Semicolon", .{}),
             .DoubleColon => formater("Symbol::DoubleColon", .{}),
-            .CurlyBraceLeft => formater("Symbol::CurlyBraceLeft", .{}),
-            .CurlyBraceRight => formater("Symbol::CurlyBraceRight", .{}),
+            .CurlyBracketLeft => formater("Symbol::CurlyBracketLeft", .{}),
+            .CurlyBracketRight => formater("Symbol::CurlyBracketRight", .{}),
             .Comma => formater("Symbol::Comma", .{}),
             .Arrow => formater("Symbol::Arrow", .{}),
             .Dot => formater("Symbol::Dot", .{}),
@@ -128,8 +128,8 @@ pub const Token = union(TokenKind) {
     pub const COMMA: Token = Token{ .Symbol = Symbol.Comma };
     pub const DOT: Token = Token{ .Symbol = Symbol.Dot };
     pub const DOUBLECOLON: Token = Token{ .Symbol = Symbol.DoubleColon };
-    pub const BRACELEFT: Token = Token{ .Symbol = Symbol.CurlyBraceLeft };
-    pub const BRACERIGHT: Token = Token{ .Symbol = Symbol.CurlyBraceRight };
+    pub const BRACELEFT: Token = Token{ .Symbol = Symbol.CurlyBracketLeft };
+    pub const BRACERIGHT: Token = Token{ .Symbol = Symbol.CurlyBracketRight };
     pub const EQUAL: Token = Token{ .Symbol = Symbol.Equal };
     pub const ARROW: Token = Token{ .Symbol = Symbol.Arrow };
     pub const PLUS: Token = Token{ .Operator = Operator.Plus };
@@ -198,19 +198,25 @@ pub const Lexer = struct {
     stream: Stream,
     arena: *Arena,
 
-    pub fn new(stream: Stream, allocator: *Arena) Lexer {
-        const arena = allocator.child("Lexer", mem.PAGE_SIZE >> 1);
-
+    pub fn new(stream: Stream, allocator: *Arena) error{OutOfMemory}!Lexer {
         var self = Lexer{
-            .words = String.new(1024, arena),
-            .content = String.new(1024, arena),
             .stream = stream,
-            .previous = Token.EOF,
-            .current = Token.EOF,
             .offset = 0,
             .start = 0,
-            .arena = arena,
+            .previous = Token.EOF,
+            .current = Token.EOF,
+            .arena = try allocator.child("Lexer", @sizeOf(Arena) + (mem.PAGE_SIZE >> 1)),
+            .words = undefined,
+            .content = undefined,
         };
+
+        errdefer self.arena.deinit();
+
+        self.words = try String.new(1024, self.arena);
+        errdefer self.words.deinit(self.arena);
+
+        self.content = try String.new(1024, self.arena);
+        errdefer self.content.deinit(self.arena);
 
         self.advance();
 
@@ -218,7 +224,7 @@ pub const Lexer = struct {
     }
 
     fn assert(self: *Lexer, expected: u8) bool {
-        if (self.content.value(self.offset) == expected) {
+        if (self.content.value(self.offset) catch unreachable == expected) {
             self.offset += 1;
 
             return true;
@@ -236,8 +242,11 @@ pub const Lexer = struct {
 
             self.start = 0;
             self.offset = len;
-            self.content.set_len(len);
-            self.stream.read(&self.content) catch return true;
+            self.content.set_len(len) catch unreachable;
+            self.stream.read(&self.content) catch |e| switch (e) {
+                error.AtEnd => return true,
+                error.OutOfBounds => @panic("TODO"),
+            };
         }
 
         return self.offset >= self.content.len;
@@ -247,12 +256,8 @@ pub const Lexer = struct {
         self.previous = self.current;
 
         while (!self.at_end()) {
-            switch (self.content.value(self.offset)) {
-                ' ',
-                '\r',
-                '\n',
-                '\t',
-                => self.offset += 1,
+            switch (self.content.value(self.offset) catch unreachable) {
+                ' ', '\r', '\n', '\t' => self.offset += 1,
                 else => break,
             }
         }
@@ -262,34 +267,34 @@ pub const Lexer = struct {
         if (self.at_end()) {
             self.current = Token.EOF;
         } else {
-            const c = self.content.value(self.offset);
+            const c = self.content.value(self.offset) catch unreachable;
             self.offset += 1;
 
             if (util.is_digit(c)) {
-                while (!self.at_end() and util.is_digit(self.content.value(self.offset))) {
+                while (!self.at_end() and util.is_digit(self.content.value(self.offset) catch unreachable)) {
                     self.offset += 1;
                 }
 
-                const string = self.content.range(Range.new(self.start, self.offset));
-                self.current = Token{ .Number = self.words.extend_range(string) };
+                const string = self.content.range(Range.new(self.start, self.offset)) catch unreachable;
+                self.current = Token{ .Number = self.words.extend_range(string) catch unreachable };
             } else if (util.is_alpha(c)) {
-                while (!self.at_end() and util.is_ascci(self.content.value(self.offset))) {
+                while (!self.at_end() and util.is_ascci(self.content.value(self.offset) catch unreachable)) {
                     self.offset += 1;
                 }
 
-                const string = self.content.range(Range.new(self.start, self.offset));
+                const string = self.content.range(Range.new(self.start, self.offset)) catch unreachable;
 
                 if (Keyword.from_string(string)) |keyword| {
                     self.current = Token{ .Keyword = keyword };
                 } else {
-                    self.current = Token{ .Identifier = self.words.extend_range(string) };
+                    self.current = Token{ .Identifier = self.words.extend_range(string) catch @panic("TODO") };
                 }
             } else {
                 switch (c) {
                     '(' => self.current = Token{ .Symbol = Symbol.ParentesisLeft },
                     ')' => self.current = Token{ .Symbol = Symbol.ParentesisRight },
-                    '{' => self.current = Token{ .Symbol = Symbol.CurlyBraceLeft },
-                    '}' => self.current = Token{ .Symbol = Symbol.CurlyBraceRight },
+                    '{' => self.current = Token{ .Symbol = Symbol.CurlyBracketLeft },
+                    '}' => self.current = Token{ .Symbol = Symbol.CurlyBracketRight },
                     ';' => self.current = Token{ .Symbol = Symbol.Semicolon },
                     ':' => self.current = Token{ .Symbol = Symbol.DoubleColon },
                     ',' => self.current = Token{ .Symbol = Symbol.Comma },
@@ -331,7 +336,7 @@ pub const Lexer = struct {
                     '"' => {
                         self.offset += 1;
 
-                        while (!self.at_end() and self.content.value(self.offset) != '"') {
+                        while (!self.at_end() and self.content.value(self.offset) catch unreachable != '"') {
                             self.offset += 1;
                         }
 
@@ -341,10 +346,11 @@ pub const Lexer = struct {
 
                         self.offset += 1;
 
-                        const string = self.content.range(Range.new(self.start + 1, self.offset - 1));
-                        self.current = Token{ .String = self.words.extend_range(string) };
+                        self.current = Token{ .String = self.words.extend_range(
+                            self.content.range(Range.new(self.start + 1, self.offset - 1)) catch unreachable,
+                        ) catch @panic("TODO") };
                     },
-                    else => @panic("Should not happen"),
+                    else => @panic("TODO"),
                 }
             }
         }
@@ -369,7 +375,6 @@ pub const Lexer = struct {
     }
 
     pub fn deinit(self: *Lexer) void {
-        self.stream.close();
         self.content.deinit(self.arena);
         self.words.deinit(self.arena);
         self.arena.deinit();
@@ -377,7 +382,7 @@ pub const Lexer = struct {
 };
 
 test "basic" {
-    var arena = Arena.new("Testing", 1);
+    var arena = try Arena.new("Testing", 1);
     defer arena.deinit();
 
     var file = try collections.File.open("zig-out/basic.lang");
@@ -385,7 +390,7 @@ test "basic" {
 
     const tokens: []const Token = &.{ Token.TYPE, Token.IDEN, Token.EQUAL, Token.NUMBER, Token.SEMICOLON, Token.TYPE, Token.IDEN, Token.EQUAL, Token.NUMBER, Token.SEMICOLON, Token.PROC, Token.IDEN, Token.PARENTESISLEFT, Token.PARENTESISRIGHT, Token.DOUBLECOLON, Token.IDEN, Token.BRACELEFT, Token.LET, Token.IDEN, Token.DOUBLECOLON, Token.IDEN, Token.EQUAL, Token.NUMBER, Token.PLUS, Token.NUMBER, Token.SEMICOLON, Token.IDEN, Token.BRACERIGHT, Token.EOF };
 
-    var lexer = Lexer.new(stream, &arena);
+    var lexer = try Lexer.new(stream, &arena);
     defer lexer.deinit();
 
     for (tokens) |token| {
@@ -396,7 +401,7 @@ test "basic" {
 }
 
 test "function call" {
-    var arena = Arena.new("Testing", 1);
+    var arena = try Arena.new("Testing", 1);
     defer arena.deinit();
 
     var file = try collections.File.open("zig-out/call.lang");
@@ -404,7 +409,7 @@ test "function call" {
     const stream = file.stream();
     const tokens: []const Token = &.{ Token.TYPE, Token.IDEN, Token.EQUAL, Token.NUMBER, Token.SEMICOLON, Token.TYPE, Token.IDEN, Token.EQUAL, Token.NUMBER, Token.SEMICOLON, Token.PROC, Token.IDEN, Token.PARENTESISLEFT, Token.IDEN, Token.DOUBLECOLON, Token.IDEN, Token.PARENTESISRIGHT, Token.DOUBLECOLON, Token.IDEN, Token.BRACELEFT, Token.IDEN, Token.BRACERIGHT, Token.PROC, Token.IDEN, Token.PARENTESISLEFT, Token.PARENTESISRIGHT, Token.DOUBLECOLON, Token.IDEN, Token.BRACELEFT, Token.LET, Token.IDEN, Token.DOUBLECOLON, Token.IDEN, Token.EQUAL, Token.IDEN, Token.PARENTESISLEFT, Token.NUMBER, Token.PARENTESISRIGHT, Token.SEMICOLON, Token.IDEN, Token.BRACERIGHT };
 
-    var lexer = Lexer.new(stream, &arena);
+    var lexer = try Lexer.new(stream, &arena);
     defer lexer.deinit();
 
     for (tokens) |token| {

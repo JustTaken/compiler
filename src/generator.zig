@@ -5,7 +5,6 @@ const elf = @import("elf.zig");
 
 const Arena = mem.Arena;
 
-const Range = collections.Range;
 const Vec = collections.Vec;
 const Stream = collections.Stream;
 const String = collections.String;
@@ -59,7 +58,7 @@ pub const Memory = struct {
     offset: Offset,
 
     pub fn print(self: Memory, formater: util.Formater) void {
-        formater("Memory({} {})", .{ self.register, self.offset });
+        formater("Memory({}, Offset({}))", .{ self.register, self.offset });
     }
 };
 
@@ -76,10 +75,10 @@ pub const Source = union(SourceKind) {
 
     pub fn print(self: Source, formater: util.Formater) void {
         return switch (self) {
-            .Register => |r| formater("Register({})", .{r}),
-            .Memory => |m| formater("Memory({})", .{m}),
-            .Immediate => |i| formater("Immediate({})", .{i}),
-            .Stack => formater("Stack", .{}),
+            .Register => |r| formater("Source::Register({})", .{r}),
+            .Memory => |m| formater("Source::Memory({})", .{m}),
+            .Immediate => |i| formater("Source::Immediate({})", .{i}),
+            .Stack => formater("Source::Stack", .{}),
         };
     }
 };
@@ -104,9 +103,9 @@ pub const Destination = union(DestinationKind) {
 
     pub fn print(self: Destination, formater: util.Formater) void {
         return switch (self) {
-            .Register => |r| formater("Source({})", .{r}),
-            .Memory => |m| formater("Source({})", .{m}),
-            .Stack => formater("Source(Stack)", .{}),
+            .Register => |r| formater("Destination::Register({})", .{r}),
+            .Memory => |m| formater("Destination::Memory({})", .{m}),
+            .Stack => formater("Destination::Stack", .{}),
         };
     }
 };
@@ -119,32 +118,32 @@ pub const BinaryOperation = struct {
 
     pub fn print(self: BinaryOperation, formater: util.Formater) void {
         switch (self.kind) {
-            .Mov => formater("Mov({} -> {})", .{ self.source, self.destination }),
-            .Add => formater("Add({} -> {})", .{ self.source, self.destination }),
-            .Sub => formater("Sub({} -> {})", .{ self.source, self.destination }),
-            .Mul => formater("Mul({} -> {})", .{ self.source, self.destination }),
+            .Mov => formater("BinaryOperation::Mov({} -> {})", .{ self.source, self.destination }),
+            .Add => formater("BinaryOperation::Add({} -> {})", .{ self.source, self.destination }),
+            .Sub => formater("BinaryOperation::Sub({} -> {})", .{ self.source, self.destination }),
+            .Mul => formater("BinaryOperation::Mul({} -> {})", .{ self.source, self.destination }),
         }
     }
 
     fn write_mov(self: BinaryOperation, buffer: *String) void {
         switch (self.destination) {
             .Stack => switch (self.source) {
-                .Register => |r| buffer.push(0x50 + r.value()),
-                .Memory => |m| buffer.extend(&.{ 0xFF, 0b01110000 + m.register.value(), to_bytes(m.offset)[0] }),
-                .Immediate => |i| buffer.mult_extend(&.{ &.{0x68}, to_bytes(i)[0 .. mem.BASE_SIZE >> 1] }),
-                .Stack => @panic("Why would you do that?"),
+                .Register => |r| buffer.push(0x50 + r.value()) catch @panic("TODO"),
+                .Memory => |m| buffer.extend(&.{ 0xFF, 0b01110000 + m.register.value(), to_bytes(m.offset)[0] }) catch @panic("TODO"),
+                .Immediate => |i| buffer.mult_extend(&.{ &.{0x68}, to_bytes(i)[0 .. mem.BASE_SIZE >> 1] }) catch @panic("TODO"),
+                .Stack => unreachable,
             },
             .Register => |rd| switch (self.source) {
-                .Stack => buffer.push(0x58 + rd.value()),
-                .Register => |rs| buffer.extend(&.{ 0x48, 0x89, 0b11000000 + (rs.value() << 3) + rd.value() }),
-                .Memory => |m| buffer.extend(&.{ 0x8B, 0b01000000 + (rd.value() << 3) + m.register.value(), to_bytes(m.offset)[0] }),
-                .Immediate => |i| buffer.mult_extend(&.{ &.{0xB8 + rd.value()}, to_bytes(i)[0 .. mem.BASE_SIZE >> 1] }),
+                .Stack => buffer.push(0x58 + rd.value()) catch @panic("TODO"),
+                .Register => |rs| buffer.extend(&.{ 0x48, 0x89, 0b11000000 + (rs.value() << 3) + rd.value() }) catch @panic("TODO"),
+                .Memory => |m| buffer.extend(&.{ 0x8B, 0b01000000 + (rd.value() << 3) + m.register.value(), to_bytes(m.offset)[0] }) catch @panic("TODO"),
+                .Immediate => |i| buffer.mult_extend(&.{ &.{0xB8 + rd.value()}, to_bytes(i)[0 .. mem.BASE_SIZE >> 1] }) catch @panic("TODO"),
             },
             .Memory => |m| switch (self.source) {
-                .Register => |r| buffer.extend(&.{ 0x89, 0b01000000 + (r.value() << 3) + m.register.value(), to_bytes(m.offset)[0] }),
-                .Immediate => |i| buffer.mult_extend(&.{ &.{ 0xC7, 0b01000000 + m.register.value(), to_bytes(m.offset)[0] }, to_bytes(i)[0 .. mem.BASE_SIZE >> 1] }),
-                .Stack => @panic("Should not happen"),
-                .Memory => @panic("Should not happen"),
+                .Register => |r| buffer.extend(&.{ 0x89, 0b01000000 + (r.value() << 3) + m.register.value(), to_bytes(m.offset)[0] }) catch @panic("TODO"),
+                .Immediate => |i| buffer.mult_extend(&.{ &.{ 0xC7, 0b01000000 + m.register.value(), to_bytes(m.offset)[0] }, to_bytes(i)[0 .. mem.BASE_SIZE >> 1] }) catch @panic("TODO"),
+                .Stack => @panic("TODO"),
+                .Memory => @panic("TODO"),
             },
         }
     }
@@ -152,16 +151,16 @@ pub const BinaryOperation = struct {
     fn write_add(self: BinaryOperation, buffer: *String) void {
         switch (self.destination) {
             .Register => |rd| switch (self.source) {
-                .Register => |rs| buffer.extend(&.{ 0x01, 0b11000000 + (rs.value() << 3) + rd.value() }),
-                .Immediate => |i| buffer.extend(&.{ 0x83, 0b11000000 + rd.value(), to_bytes(i)[0] }),
-                .Stack => @panic("Why whould you do that?"),
+                .Register => |rs| buffer.extend(&.{ 0x01, 0b11000000 + (rs.value() << 3) + rd.value() }) catch @panic("TODO"),
+                .Immediate => |i| buffer.extend(&.{ 0x83, 0b11000000 + rd.value(), to_bytes(i)[0] }) catch @panic("TODO"),
+                .Stack => @panic("TODO"),
                 .Memory => @panic("TODO"),
             },
             .Memory => |m| switch (self.source) {
-                .Register => |r| buffer.extend(&.{ 0x01, 0b01000000 + (r.value() << 3) + m.register.value() }),
+                .Register => |r| buffer.extend(&.{ 0x01, 0b01000000 + (r.value() << 3) + m.register.value() }) catch @panic("TODO"),
                 .Immediate => @panic("TODO"),
                 .Stack => @panic("TODO"),
-                .Memory => @panic("Is that possible?"),
+                .Memory => @panic("TODO"),
             },
             .Stack => @panic("Should not happen"),
         }
@@ -170,18 +169,18 @@ pub const BinaryOperation = struct {
     fn write_sub(self: BinaryOperation, buffer: *String) void {
         switch (self.destination) {
             .Register => |rd| switch (self.source) {
-                .Register => |rs| buffer.extend(&.{ 0x29, 0b11000000 + (rs.value() << 3) + rd.value() }),
-                .Immediate => |i| buffer.extend(&.{ 0x48, 0b11101000 + rd.value(), to_bytes(i)[0] }),
-                .Stack => @panic("Why whould you do that?"),
+                .Register => |rs| buffer.extend(&.{ 0x29, 0b11000000 + (rs.value() << 3) + rd.value() }) catch @panic("TODO"),
+                .Immediate => |i| buffer.extend(&.{ 0x48, 0b11101000 + rd.value(), to_bytes(i)[0] }) catch @panic("TODO"),
                 .Memory => @panic("TODO"),
+                .Stack => @panic("TODO"),
             },
             .Memory => |m| switch (self.source) {
-                .Register => |r| buffer.extend(&.{ 0x029, 0b01000000 + (r.value() << 3) + m.register.value() }),
+                .Register => |r| buffer.extend(&.{ 0x029, 0b01000000 + (r.value() << 3) + m.register.value() }) catch @panic("TODO"),
                 .Immediate => @panic("TODO"),
                 .Stack => @panic("TODO"),
-                .Memory => @panic("Is that possible?"),
+                .Memory => @panic("TODO"),
             },
-            .Stack => @panic("Should not happen"),
+            .Stack => unreachable,
         }
     }
 };
@@ -201,26 +200,26 @@ pub const Operation = union(OperationKind) {
 
     pub fn print(self: Operation, formater: util.Formater) void {
         switch (self) {
-            .Syscall => formater("Syscall", .{}),
-            .Ret => formater("Ret", .{}),
-            .Call => |immediate| formater("Call({})", .{immediate}),
-            .Binary => |binary| formater("Binary({})", .{binary}),
+            .Syscall => formater("Operation::Syscall", .{}),
+            .Ret => formater("Operation::Ret", .{}),
+            .Call => |immediate| formater("Operation::Call(Offset({}))", .{immediate}),
+            .Binary => |binary| formater("Operation::Binary({})", .{binary}),
         }
     }
 
     fn write(self: Operation, buffer: *String) void {
-        util.print(.Info, "Operation({})", .{self});
+        util.print(.Info, "{}", .{self});
 
         switch (self) {
-            .Syscall => buffer.extend(&.{ 0x0F, 0x05 }),
-            .Ret => buffer.push(0xC3),
+            .Syscall => buffer.extend(&.{ 0x0F, 0x05 }) catch @panic("TODO"),
+            .Ret => buffer.push(0xC3) catch @panic("TODO"),
             .Call => |immediate| {
                 const call_instruction_size: isize = 0x05;
                 const len: isize = @intCast(buffer.len);
                 const i: isize = @intCast(immediate);
                 const offset = i - len - call_instruction_size;
 
-                buffer.mult_extend(&.{ &.{0xE8}, to_bytes(@bitCast(offset))[0 .. mem.BASE_SIZE >> 1] });
+                buffer.mult_extend(&.{ &.{0xE8}, to_bytes(@bitCast(offset))[0 .. mem.BASE_SIZE >> 1] }) catch @panic("TODO");
             },
             .Binary => |binary| switch (binary.kind) {
                 .Mov => binary.write_mov(buffer),
@@ -269,8 +268,12 @@ pub const Operation = union(OperationKind) {
     }
 };
 
+pub const GeneratorError = error{
+    OutOfRegisters,
+    SourceNotBeingUsed,
+};
+
 pub const Generator = struct {
-    stream: Stream,
     code: String,
     data: String,
     operations: Vec(Operation),
@@ -283,15 +286,18 @@ pub const Generator = struct {
         used: Vec(Register),
         stack: usize,
 
-        fn new(arena: *Arena) Manager {
+        fn new(arena: *Arena) error{OutOfMemory}!Manager {
             const usable_registers = &.{
                 Register.Rax, Register.Rcx, Register.Rdx, Register.Rbx, Register.Rdi,
             };
 
-            const used = Vec(Register).new(usable_registers.len, arena);
-            var free = Vec(Register).new(usable_registers.len, arena);
+            var used = try Vec(Register).new(usable_registers.len, arena);
+            errdefer used.deinit(arena);
 
-            free.extend(usable_registers);
+            var free = try Vec(Register).new(usable_registers.len, arena);
+            errdefer used.deinit(arena);
+
+            free.extend(usable_registers) catch unreachable;
 
             return Manager{
                 .used = used,
@@ -300,26 +306,28 @@ pub const Generator = struct {
             };
         }
 
-        pub fn get(self: *Manager) Register {
-            const r = self.free.pop();
-            self.used.push(r);
+        pub fn get(self: *Manager) GeneratorError!Register {
+            const r = self.free.pop() catch return GeneratorError.OutOfRegisters;
+            self.used.push(r) catch unreachable;
 
             return r;
         }
 
-        pub fn give_back(self: *Manager, r: Register) void {
-            for (self.used.offset(0), 0..) |use, i| {
+        pub fn give_back(self: *Manager, r: Register) GeneratorError!void {
+            for (self.used.offset(0) catch unreachable, 0..) |use, i| {
                 if (use == r) {
-                    self.used.remove(i);
-                    self.free.push(r);
+                    self.used.remove(i) catch unreachable;
+                    self.free.push(r) catch unreachable;
 
-                    break;
+                    return;
                 }
             }
+
+            return GeneratorError.SourceNotBeingUsed;
         }
 
         fn reset(self: *Manager) void {
-            if (self.used.len > 0) @panic("Should not happen");
+            if (self.used.len > 0) unreachable;
 
             self.stack = 0;
         }
@@ -330,27 +338,43 @@ pub const Generator = struct {
         }
     };
 
-    pub fn new(stream: Stream, allocator: *Arena) Generator {
-        const arena = allocator.child("Generator", mem.PAGE_SIZE >> 1);
+    pub fn new(allocator: *Arena) error{OutOfMemory}!Generator {
+        var self: Generator = undefined;
 
-        return Generator{
-            .stream = stream,
-            .code = String.new(512, arena),
-            .data = String.new(1, arena),
-            .operations = Vec(Operation).new(16, arena),
-            .manager = Manager.new(arena),
-            .arena = arena,
-        };
+        self.arena = try allocator.child("Generator", mem.PAGE_SIZE >> 1);
+        errdefer self.arena.deinit();
+
+        self.code = try String.new(512, self.arena);
+        errdefer self.code.deinit(self.arena);
+
+        self.data = try String.new(1, self.arena);
+        errdefer self.data.deinit(self.arena);
+
+        self.operations = try Vec(Operation).new(16, self.arena);
+        errdefer self.operations.deinit(self.arena);
+
+        self.manager = try Manager.new(self.arena);
+        errdefer self.manager.deinit(self.arena);
+
+        return self;
     }
 
-    pub fn give_back(self: *Generator, source: Source) void {
+    pub fn give_back(self: *Generator, source: Source) GeneratorError!void {
         if (@as(SourceKind, source) == SourceKind.Register) {
-            self.manager.give_back(source.Register);
+            try self.manager.give_back(source.Register);
+        } else {
+            @panic("TODO");
         }
     }
 
     pub fn push_procedure(self: *Generator) void {
-        var startup_instructions = Vec(Operation).new(2, self.arena);
+        defer {
+            self.manager.reset();
+            self.operations.clear();
+        }
+
+        var startup_instructions = Vec(Operation).new(2, self.arena) catch @panic("TODO");
+        defer startup_instructions.deinit(self.arena);
 
         if (self.manager.stack > 0) {
             startup_instructions.extend(&.{
@@ -364,31 +388,38 @@ pub const Generator = struct {
                     .source = Source{ .Immediate = self.manager.stack },
                     .destination = Destination{ .Register = Register.Rsp },
                 } },
-            });
+            }) catch unreachable;
 
             self.operations.push(Operation{ .Binary = BinaryOperation{
                 .kind = BinaryKind.Mov,
                 .source = Source{ .Register = Register.Rbp },
                 .destination = Destination{ .Register = Register.Rsp },
-            } });
+            } }) catch @panic("TODO");
         }
 
-        self.operations.push(Operation.Ret);
+        self.operations.push(Operation.Ret) catch @panic("TODO");
 
-        for (startup_instructions.offset(0)) |operation| {
+        util.print(.Info, "------------------- Procedure start ----------------------", .{});
+
+        for (startup_instructions.offset(0) catch unreachable) |operation| {
             operation.write(&self.code);
         }
 
-        for (self.operations.offset(0)) |operation| {
+        for (self.operations.offset(0) catch unreachable) |operation| {
             operation.write(&self.code);
         }
+
+        util.print(.Info, "------------------- Procedure end ------------------------", .{});
 
         self.manager.reset();
         self.operations.clear();
-        startup_instructions.deinit(self.arena);
     }
 
-    pub fn generate(self: *Generator, main_procedure_offset: usize) void {
+    pub fn push_operation(self: *Generator, operation: Operation) void {
+        self.operations.push(operation) catch @panic("TODO");
+    }
+
+    pub fn generate(self: *Generator, stream: Stream, main_procedure_offset: usize) void {
         const program_end = [_]Operation{
             Operation{ .Call = main_procedure_offset },
             Operation{ .Binary = BinaryOperation{
@@ -417,22 +448,20 @@ pub const Generator = struct {
         const h_size = @sizeOf(ElfHeader);
         const ph_size = @sizeOf(ProgramHeader);
 
-        self.code.shift(0, h_size + ph_size);
+        self.code.shift_right(0, h_size + ph_size) catch @panic("TODO");
 
         const code_len = self.code.len;
 
-        self.code.set_len(0);
+        self.code.set_len(0) catch unreachable;
 
-        self.code.extend(mem.as_bytes(ElfHeader, &elf_header));
-        self.code.extend(mem.as_bytes(ProgramHeader, &program_header));
+        self.code.extend(mem.as_bytes(ElfHeader, &elf_header)) catch @panic("TODO");
+        self.code.extend(mem.as_bytes(ProgramHeader, &program_header)) catch @panic("TODO");
 
-        self.code.set_len(code_len);
-        self.stream.write(self.code) catch @panic("Should not happen");
+        self.code.set_len(code_len) catch unreachable;
+        stream.write(self.code) catch @panic("TODO");
     }
 
     pub fn deinit(self: *Generator) void {
-        self.stream.close();
-
         self.manager.deinit(self.arena);
         self.operations.deinit(self.arena);
         self.data.deinit(self.arena);

@@ -48,7 +48,7 @@ const Rule = struct {
         return switch (token) {
             .Symbol => |symbol| switch (symbol) {
                 .ParentesisLeft => new(Parser.grouping, Parser.call, .Call),
-                .CurlyBraceLeft => new(Parser.scope, Parser.construct, .Scope),
+                .CurlyBracketLeft => new(Parser.scope, Parser.construct, .Scope),
                 .Dot => new(null, Parser.property, .Call),
                 else => new(null, null, .Nothing),
             },
@@ -77,14 +77,19 @@ pub const Parser = struct {
     checker: TypeChecker,
     arena: *Arena,
 
-    pub fn new(input: Stream, output: Stream, allocator: *Arena) Parser {
-        const arena = allocator.child("Parser", mem.PAGE_SIZE * 2);
+    pub fn new(input: Stream, allocator: *Arena) error{OutOfMemory}!Parser {
+        var self: Parser = undefined;
 
-        return Parser{
-            .lexer = Lexer.new(input, arena),
-            .checker = TypeChecker.new(output, arena),
-            .arena = arena,
-        };
+        self.arena = try allocator.child("Parser", mem.PAGE_SIZE * 3);
+        errdefer self.arena.deinit();
+
+        self.lexer = try Lexer.new(input, self.arena);
+        errdefer self.lexer.deinit();
+
+        self.checker = try TypeChecker.new(self.arena);
+        errdefer self.checker.deinit();
+
+        return self;
     }
 
     pub fn next(self: *Parser) bool {
@@ -95,9 +100,9 @@ pub const Parser = struct {
                 .Keyword => |keyword| switch (keyword) {
                     .Procedure => self.procedure(),
                     .Type => self.typ(),
-                    else => @panic("Should no happen"),
+                    else => @panic("TODO: No other statement kind is accepted for now"),
                 },
-                else => @panic("Should not happen"),
+                else => @panic("TODO: do not accept expressions here for now"),
             }
 
             return true;
@@ -118,7 +123,7 @@ pub const Parser = struct {
         switch (operator) {
             .Bang => self.checker.push_unary(.Bang),
             .Minus => self.checker.push_unary(.Minus),
-            else => @panic("Should not happe"),
+            else => @panic("TODO"),
         }
     }
 
@@ -149,13 +154,13 @@ pub const Parser = struct {
             .Minus => self.checker.push_binary(.Sub, words),
             .Star => self.checker.push_binary(.Mul, words),
             .Slash => self.checker.push_binary(.Div, words),
-            else => @panic("Should not happen"),
+            else => @panic("TODO"),
         }
     }
 
     fn identifier(self: *Parser) void {
         const range = self.lexer.previous.Identifier;
-        self.checker.ranges.push(range);
+        self.checker.ranges.push(range) catch @panic("TODO");
 
         if (self.lexer.current.eql(Token.PARENTESISLEFT) or self.lexer.current.eql(Token.BRACELEFT)) {} else {
             self.checker.push_identifier(&self.lexer.words);
@@ -180,7 +185,7 @@ pub const Parser = struct {
             self.parse(.Assignment);
             self.lexer.consume(Token.COMMA);
 
-            self.checker.ranges.push(name.Identifier);
+            self.checker.ranges.push(name.Identifier) catch @panic("TODO");
             field_count += 1;
         }
 
@@ -193,7 +198,7 @@ pub const Parser = struct {
         while (!self.lexer.match(Token.PARENTESISRIGHT)) {
             if (!self.lexer.match(Token.COMMA)) {
                 if (!self.lexer.previous.eql(Token.PARENTESISLEFT)) {
-                    @panic("Should not happen");
+                    @panic("TODO");
                 }
             }
 
@@ -222,7 +227,7 @@ pub const Parser = struct {
 
                 self.lexer.consume(Token.IDEN);
                 self.lexer.consume(Token.COMMA);
-                self.checker.ranges.extend(&.{ field_name.Identifier, field_type.Identifier });
+                self.checker.ranges.extend(&.{ field_name.Identifier, field_type.Identifier }) catch @panic("TODO");
 
                 field_count += 1;
             }
@@ -233,10 +238,10 @@ pub const Parser = struct {
             self.lexer.consume(Token.NUMBER);
             self.lexer.consume(Token.SEMICOLON);
 
-            size += @intCast(util.parse(self.lexer.words.range(type_size.Number)));
+            size += @intCast(util.parse(self.lexer.words.range(type_size.Number) catch unreachable));
         }
 
-        self.checker.ranges.push(name.Identifier);
+        self.checker.ranges.push(name.Identifier) catch @panic("TODO");
         self.checker.push_type(field_count, size, &self.lexer.words);
     }
 
@@ -260,7 +265,7 @@ pub const Parser = struct {
         while (!self.lexer.match(Token.PARENTESISRIGHT)) {
             if (!self.lexer.match(Token.COMMA)) {
                 if (!self.lexer.previous.eql(Token.PARENTESISLEFT)) {
-                    @panic("Should not happen");
+                    @panic("TODO");
                 }
             }
 
@@ -272,7 +277,7 @@ pub const Parser = struct {
             const kind = self.lexer.current;
 
             self.lexer.consume(Token.IDEN);
-            self.checker.ranges.extend(&.{ param.Identifier, kind.Identifier });
+            self.checker.ranges.extend(&.{ param.Identifier, kind.Identifier }) catch @panic("TODO");
 
             parameters_size += self.checker.push_parameter(parameters_size, &self.lexer.words);
             parameter_count += 1;
@@ -286,7 +291,7 @@ pub const Parser = struct {
         self.lexer.consume(Token.BRACELEFT);
         self.scope();
 
-        self.checker.ranges.extend(&.{ name.Identifier, return_type.Identifier });
+        self.checker.ranges.extend(&.{ name.Identifier, return_type.Identifier }) catch @panic("TODO");
         self.checker.push_procedure(parameter_count, variable_count, &self.lexer.words);
     }
 
@@ -307,7 +312,7 @@ pub const Parser = struct {
         self.parse(.Assignment);
 
         self.lexer.consume(Token.SEMICOLON);
-        self.checker.ranges.extend(&.{ iden.Identifier, kind.Identifier });
+        self.checker.ranges.extend(&.{ iden.Identifier, kind.Identifier }) catch @panic("TODO");
         self.checker.push_let(&self.lexer.words);
     }
 
@@ -329,7 +334,7 @@ pub const Parser = struct {
                         self.let();
                         declaration_count += 1;
                     },
-                    else => @panic("Here we do not accept this kind of statement"),
+                    else => @panic("TODO"),
                 },
 
                 else => {
@@ -357,7 +362,7 @@ pub const Parser = struct {
         if (Rule.from_token(self.lexer.previous).prefix) |prefix| {
             prefix(self);
         } else {
-            @panic("Should not happen");
+            @panic("TODO");
         }
 
         var rule = Rule.from_token(self.lexer.current);
@@ -374,8 +379,8 @@ pub const Parser = struct {
         }
     }
 
-    pub fn compile(self: *Parser) void {
-        self.checker.generate(&self.lexer.words);
+    pub fn compile(self: *Parser, stream: Stream) void {
+        self.checker.generate(stream, &self.lexer.words);
     }
 
     pub fn deinit(self: *Parser) void {
@@ -386,76 +391,78 @@ pub const Parser = struct {
 };
 
 test "basic" {
-    var arena = mem.Arena.new("Testing", 3);
+    var arena = try mem.Arena.new("Testing", 3);
     defer arena.deinit();
 
     var input_file = try collections.File.open("zig-out/basic.lang");
-    var output = String.new(512, &arena);
+    var output = try String.new(512, &arena);
     defer output.deinit(&arena);
 
     const input_stream = input_file.stream();
     const output_stream = collections.string_stream(&output);
 
-    var parser = Parser.new(input_stream, output_stream, &arena);
+    var parser = try Parser.new(input_stream, &arena);
     defer parser.deinit();
 
     while (parser.next()) {}
-    parser.compile();
-    try util.assert(mem.equal(u8, output.offset(0), &.{ 127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 62, 0, 1, 0, 0, 0, 129, 0, 64, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 56, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 5, 0, 0, 0, 120, 0, 0, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 184, 10, 0, 0, 0, 131, 192, 10, 195, 232, 242, 255, 255, 255, 72, 137, 199, 184, 60, 0, 0, 0, 15, 5 }));
+
+    parser.compile(output_stream);
+    try util.assert(mem.equal(u8, try output.offset(0), &.{ 127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 62, 0, 1, 0, 0, 0, 129, 0, 64, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 56, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 5, 0, 0, 0, 120, 0, 0, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 184, 10, 0, 0, 0, 131, 192, 10, 195, 232, 242, 255, 255, 255, 72, 137, 199, 184, 60, 0, 0, 0, 15, 5 }));
 }
 
 test "binary operation" {
-    var arena = mem.Arena.new("Testing", 3);
+    var arena = try mem.Arena.new("Testing", 3);
     defer arena.deinit();
 
     var input_file = try collections.File.open("zig-out/binary.lang");
-    var output = String.new(512, &arena);
+    var output = try String.new(512, &arena);
     defer output.deinit(&arena);
 
     const input_stream = input_file.stream();
     const output_stream = collections.string_stream(&output);
 
-    var parser = Parser.new(input_stream, output_stream, &arena);
+    var parser = try Parser.new(input_stream, &arena);
     defer parser.deinit();
 
     while (parser.next()) {}
-    parser.compile();
-    try util.assert(mem.equal(u8, output.offset(0), &.{ 127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 62, 0, 1, 0, 0, 0, 134, 0, 64, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 56, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 5, 0, 0, 0, 120, 0, 0, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 14, 0, 0, 0, 0, 0, 0, 0, 14, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 191, 10, 0, 0, 0, 131, 199, 10, 72, 137, 248, 1, 248, 195, 232, 237, 255, 255, 255, 72, 137, 199, 184, 60, 0, 0, 0, 15, 5 }));
+
+    parser.compile(output_stream);
+    try util.assert(mem.equal(u8, try output.offset(0), &.{ 127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 62, 0, 1, 0, 0, 0, 134, 0, 64, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 56, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 5, 0, 0, 0, 120, 0, 0, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 14, 0, 0, 0, 0, 0, 0, 0, 14, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 191, 10, 0, 0, 0, 131, 199, 10, 72, 137, 248, 1, 248, 195, 232, 237, 255, 255, 255, 72, 137, 199, 184, 60, 0, 0, 0, 15, 5 }));
 }
 
 test "function call " {
-    var arena = mem.Arena.new("Testing", 3);
+    var arena = try mem.Arena.new("Testing", 3);
     defer arena.deinit();
 
     var input_file = try collections.File.open("zig-out/call.lang");
-    var output = String.new(512, &arena);
+    var output = try String.new(512, &arena);
     defer output.deinit(&arena);
 
     const input_stream = input_file.stream();
     const output_stream = collections.string_stream(&output);
 
-    var parser = Parser.new(input_stream, output_stream, &arena);
+    var parser = try Parser.new(input_stream, &arena);
     defer parser.deinit();
 
     while (parser.next()) {}
-    parser.compile();
-    try util.assert(mem.equal(u8, output.offset(0), &.{ 127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 62, 0, 1, 0, 0, 0, 135, 0, 64, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 56, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 5, 0, 0, 0, 120, 0, 0, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 15, 0, 0, 0, 0, 0, 0, 0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 139, 69, 0, 195, 104, 10, 0, 0, 0, 232, 242, 255, 255, 255, 195, 232, 240, 255, 255, 255, 72, 137, 199, 184, 60, 0, 0, 0, 15, 5 }));
+
+    parser.compile(output_stream);
+    try util.assert(mem.equal(u8, try output.offset(0), &.{ 127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 62, 0, 1, 0, 0, 0, 135, 0, 64, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 56, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 5, 0, 0, 0, 120, 0, 0, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 15, 0, 0, 0, 0, 0, 0, 0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 139, 69, 0, 195, 104, 10, 0, 0, 0, 232, 242, 255, 255, 255, 195, 232, 240, 255, 255, 255, 72, 137, 199, 184, 60, 0, 0, 0, 15, 5 }));
 }
 
-// test "type return" {
-//     var arena = mem.Arena.new("Testing", 3);
-//     defer arena.deinit();
+test "type return" {
+    var arena = try mem.Arena.new("Testing", 3);
+    defer arena.deinit();
 
-//     var input_file = try collections.File.open("zig-out/type_return.lang");
-//     var output = String.new(512, &arena);
-//     defer output.deinit(&arena);
+    var input_file = try collections.File.open("zig-out/type_return.lang");
+    var output = try String.new(512, &arena);
+    defer output.deinit(&arena);
 
-//     const input_stream = input_file.stream();
-//     const output_stream = collections.string_stream(&output);
+    var parser = try Parser.new(input_file.stream(), &arena);
+    defer parser.deinit();
 
-//     var parser = Parser.new(input_stream, output_stream, &arena);
-//     defer parser.deinit();
+    while (parser.next()) {}
 
-//     while (parser.next()) {}
-//     util.print(.Info, "buffer: {d}\n", .{output.offset(0)});
-// }
+    parser.compile(collections.string_stream(&output));
+    try util.assert(true);
+}
