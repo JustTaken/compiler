@@ -6,9 +6,8 @@ const generator = @import("generator.zig");
 
 const Arena = mem.Arena;
 const Stream = collections.Stream;
-const Range = util.Range;
 const Vec = collections.Vec;
-const RangeMap = collections.RangeMap;
+const StringMap = collections.StringMap;
 const Array = collections.Array;
 const String = collections.String;
 const Operation = generator.Operation;
@@ -36,11 +35,11 @@ pub const TypeChecker = struct {
     parameters: Vec(*const ConstantType),
     constants: Vec(Constant),
 
-    ranges: Vec(Range),
+    names: Vec([]const u8),
 
-    variables: RangeMap(*Constant),
+    variables: StringMap(*Constant),
     variable_constants: Vec(Constant),
-    variable_refs: Vec(*Range),
+    variable_refs: Vec(*[]const u8),
 
     generator: Generator,
     arena: *Arena,
@@ -59,17 +58,17 @@ pub const TypeChecker = struct {
         self.constants = try Vec(Constant).new(VARIABLE_MAX, self.arena);
         errdefer self.constants.deinit(self.arena);
 
-        self.variables = try RangeMap(*Constant).new(VARIABLE_MAX, self.arena);
+        self.variables = try StringMap(*Constant).new(VARIABLE_MAX, self.arena);
         errdefer self.variables.deinit(self.arena);
 
         self.variable_constants = try Vec(Constant).new(VARIABLE_MAX, self.arena);
         errdefer self.variable_constants.deinit(self.arena);
 
-        self.variable_refs = try Vec(*Range).new(VARIABLE_MAX, self.arena);
+        self.variable_refs = try Vec(*[]const u8).new(VARIABLE_MAX, self.arena);
         errdefer self.variable_refs.deinit(self.arena);
 
-        self.ranges = try Vec(Range).new(VARIABLE_MAX, self.arena);
-        errdefer self.ranges.deinit(self.arena);
+        self.names = try Vec([]const u8).new(VARIABLE_MAX, self.arena);
+        errdefer self.names.deinit(self.arena);
 
         self.generator = try Generator.new(self.arena);
         errdefer self.generator.deinit();
@@ -77,11 +76,11 @@ pub const TypeChecker = struct {
         return self;
     }
 
-    fn push_variable(self: *TypeChecker, name: Range, cons: Constant, words: *const String) void {
+    fn push_variable(self: *TypeChecker, name: []const u8, cons: Constant) void {
         self.variable_constants.push(cons) catch @panic("TODO");
 
         const ptr = self.variable_constants.last() catch @panic("TODO");
-        const index = self.variables.put(name, ptr, words) catch @panic("TODO");
+        const index = self.variables.put(name, ptr) catch @panic("TODO");
         const ref_name = &self.variables.key[index];
 
         self.variable_refs.push(ref_name) catch @panic("TODO");
@@ -101,7 +100,7 @@ pub const TypeChecker = struct {
 
         for (0..declaration_count) |_| {
             const c = self.variable_refs.pop() catch @panic("TODO");
-            c.reset();
+            c.len = 0;
         }
 
         self.constants.push(Constant{ .Scope = self.arena.create(ConstantScope, ConstantScope{
@@ -112,18 +111,18 @@ pub const TypeChecker = struct {
         }) catch @panic("TODO") }) catch @panic("TODO");
     }
 
-    pub fn push_identifier(self: *TypeChecker, words: *const String) void {
-        const range = self.ranges.pop() catch @panic("TODO");
+    pub fn push_identifier(self: *TypeChecker) void {
+        const name = self.names.pop() catch @panic("TODO");
 
-        if (self.variables.get(words.range(range) catch unreachable, words)) |variable| {
+        if (self.variables.get(name)) |variable| {
             self.constants.push(Constant{ .Ref = variable.* }) catch @panic("TODO");
         } else {
             @panic("TODO");
         }
     }
 
-    pub fn push_number(self: *TypeChecker, range: Range, words: *const String) void {
-        const number = util.parse(words.range(range) catch unreachable);
+    pub fn push_number(self: *TypeChecker, string: []const u8) void {
+        const number = util.parse(string);
 
         self.constants.push(Constant{ .Number = self.arena.create(ConstantNumber, ConstantNumber{
             .inner = null,
@@ -132,7 +131,7 @@ pub const TypeChecker = struct {
         }) catch @panic("TODO") }) catch @panic("TODO");
     }
 
-    pub fn push_binary(self: *TypeChecker, operator: ConstantBinary.Operator, words: *const String) void {
+    pub fn push_binary(self: *TypeChecker, operator: ConstantBinary.Operator) void {
         var right = self.constants.pop() catch @panic("TODO");
         var left = self.constants.pop() catch @panic("TODO");
         var inner: ?*const ConstantType = null;
@@ -141,7 +140,7 @@ pub const TypeChecker = struct {
         const right_inner = right.get_type();
 
         if (operator.is_comparison()) {
-            inner = self.get_type("bool", words);
+            inner = self.get_type("bool");
         } else if (left_inner) |typ| {
             if (!right.set_type(typ)) {
                 @panic("TODO: Show type divergency");
@@ -177,11 +176,10 @@ pub const TypeChecker = struct {
         }) catch @panic("TODO") }) catch @panic("TODO");
     }
 
-    pub fn push_call(self: *TypeChecker, argument_count: u32, words: *const String) void {
-        const range = self.ranges.pop() catch @panic("TODO");
-        const name = words.range(range) catch unreachable;
+    pub fn push_call(self: *TypeChecker, argument_count: u32) void {
+        const name = self.names.pop() catch @panic("TODO");
 
-        const procedure = self.get_procedure(name, words);
+        const procedure = self.get_procedure(name);
         if (procedure.parameters.len != argument_count) @panic("TODO: show wrong arguments");
 
         var arguments = Array(Constant).new(argument_count, self.arena) catch @panic("TODO");
@@ -204,33 +202,33 @@ pub const TypeChecker = struct {
         }) catch @panic("TODO") }) catch @panic("TODO");
     }
 
-    pub fn push_parameter(self: *TypeChecker, current_size: u32, words: *const String) u32 {
-        const type_range = self.ranges.pop() catch @panic("TODO");
-        const name_range = self.ranges.pop() catch @panic("TODO");
-        const inner = self.get_type(words.range(type_range) catch unreachable, words);
+    pub fn push_parameter(self: *TypeChecker, current_size: u32) u32 {
+        const type_ = self.names.pop() catch @panic("TODO");
+        const name = self.names.pop() catch @panic("TODO");
+        const inner = self.get_type(type_);
         const size = inner.size;
 
         self.parameters.push(inner) catch @panic("TODO");
-        self.push_variable(name_range, Constant{ .Parameter = self.arena.create(ConstantParameter, ConstantParameter{
+        self.push_variable(name, Constant{ .Parameter = self.arena.create(ConstantParameter, ConstantParameter{
             .offset = current_size,
             .inner = inner,
             .usage = 0,
-        }) catch @panic("TODO") }, words);
+        }) catch @panic("TODO") });
 
         return size;
     }
 
-    fn get_property(self: *TypeChecker, cons: Constant, range: Range, words: *const String) Constant {
+    fn get_property(self: *TypeChecker, cons: Constant, name: []const u8) Constant {
         switch (cons) {
             .Ref => |ref| {
-                return self.get_property(ref.*, range, words);
+                return self.get_property(ref.*, name);
             },
             .Construct => |construct| {
-                const index = construct.inner.field_index(range, words) catch @panic("Show that property do not exist");
+                const index = construct.inner.field_index(name) catch @panic("Show that property do not exist");
                 return Constant{ .Ref = &construct.constants.items[index] };
             },
             .FieldAcess => |field| {
-                const index = field.inner.field_index(range, words) catch @panic("TODO: Show that property do not exist");
+                const index = field.inner.field_index(name) catch @panic("TODO: Show that property do not exist");
 
                 return Constant{ .FieldAcess = self.arena.create(ConstantFieldAcess, ConstantFieldAcess{
                     .index = index,
@@ -241,7 +239,7 @@ pub const TypeChecker = struct {
                 }) catch @panic("TODO") };
             },
             .Call => |call| {
-                const index = call.procedure.inner.field_index(range, words) catch @panic("TODO");
+                const index = call.procedure.inner.field_index(name) catch @panic("TODO");
 
                 return Constant{ .FieldAcess = self.arena.create(ConstantFieldAcess, ConstantFieldAcess{
                     .index = index,
@@ -255,66 +253,68 @@ pub const TypeChecker = struct {
         }
     }
 
-    pub fn push_property(self: *TypeChecker, range: Range, words: *const String) void {
+    pub fn push_property(self: *TypeChecker, name: []const u8) void {
         const cons = self.constants.pop() catch @panic("TODO");
-        self.constants.push(self.get_property(cons, range, words)) catch @panic("TODO");
+        self.constants.push(self.get_property(cons, name)) catch @panic("TODO");
     }
 
-    pub fn push_let(self: *TypeChecker, words: *const String) void {
-        const type_range = self.ranges.pop() catch @panic("TODO");
-        const name_range = self.ranges.pop() catch @panic("TODO");
-        const inner = self.get_type(words.range(type_range) catch unreachable, words);
+    pub fn push_let(self: *TypeChecker) void {
+        const type_ = self.names.pop() catch @panic("TODO");
+        const name = self.names.pop() catch @panic("TODO");
+        const inner = self.get_type(type_);
         var cons = self.constants.pop() catch @panic("TODO");
 
         if (!cons.set_type(inner)) {
             @panic("TODO: Show type divergency");
         }
 
-        self.push_variable(name_range, cons, words);
+        self.push_variable(name, cons);
     }
 
-    pub fn push_type(self: *TypeChecker, field_count: u32, annotated_size: u32, words: *const String) void {
-        const name_range = self.ranges.pop() catch @panic("TODO");
+    pub fn push_type(self: *TypeChecker, field_count: u32, annotated_size: u32) void {
+        const name = self.names.pop() catch @panic("TODO");
+
         var fields = Array(ConstantType.Field).new(field_count, self.arena) catch @panic("TODO");
 
         var size: u32 = annotated_size;
         var alignment: u32 = annotated_size;
 
         for (0..field_count) |i| {
-            const field_type_range = self.ranges.pop() catch @panic("TODO");
-            const field_name_range = self.ranges.pop() catch @panic("TODO");
-            const inner = self.get_type(words.range(field_type_range) catch unreachable, words);
+            const field_type = self.names.pop() catch @panic("TODO");
+            const field_name = self.names.pop() catch @panic("TODO");
+            const inner = self.get_type(field_type);
 
             size += inner.size;
             alignment = util.max(alignment, inner.alignment);
 
             fields.set(ConstantType.Field{
-                .name = field_name_range,
+                .name = field_name,
                 .inner = inner,
             }, i) catch unreachable;
         }
 
-        self.push_variable(name_range, Constant{ .Type = self.arena.create(ConstantType, ConstantType{
+        self.push_variable(name, Constant{ .Type = self.arena.create(ConstantType, ConstantType{
+            .name = name,
             .fields = fields,
             .size = size,
             .alignment = alignment,
             .usage = 0,
-        }) catch @panic("TODO") }, words);
+        }) catch @panic("TODO") });
     }
 
-    pub fn push_construct(self: *TypeChecker, field_count: u32, words: *const String) void {
-        const type_range = self.ranges.get_back(field_count) catch @panic("TODO");
-        const inner = self.get_type(words.range(type_range) catch unreachable, words);
+    pub fn push_construct(self: *TypeChecker, field_count: u32) void {
+        const type_ = self.names.get_back(field_count) catch @panic("TODO");
+        const inner = self.get_type(type_);
 
         if (inner.fields.len != field_count) @panic("Should not happen");
 
         var constants = Array(Constant).new(field_count, self.arena) catch @panic("TODO");
 
         for (0..field_count) |i| {
-            const name = self.ranges.pop() catch @panic("TODO");
+            const name = self.names.pop() catch @panic("TODO");
 
-            if (!mem.equal(u8, words.range(name) catch unreachable, words.range(inner.fields.items[i].name) catch unreachable)) {
-                util.print(.Info, "{s} - {s}\n", .{ words.range(name) catch unreachable, words.range(inner.fields.items[i].name) catch unreachable });
+            if (!mem.equal(u8, name, inner.fields.items[i].name)) {
+                util.print(.Info, "{s} - {s}\n", .{ name, inner.fields.items[i].name });
                 @panic("TODO: accept a different field order than the defined type order");
             }
 
@@ -324,7 +324,7 @@ pub const TypeChecker = struct {
             constants.set(cons, i) catch unreachable;
         }
 
-        _ = self.ranges.pop() catch unreachable;
+        _ = self.names.pop() catch unreachable;
 
         self.constants.push(Constant{ .Construct = self.arena.create(ConstantConstruct, ConstantConstruct{
             .constants = constants,
@@ -334,10 +334,10 @@ pub const TypeChecker = struct {
         }) catch @panic("TODO") }) catch @panic("TODO");
     }
 
-    pub fn push_procedure(self: *TypeChecker, parameter_count: u32, variable_start: u32, words: *const String) void {
-        const type_range = self.ranges.pop() catch @panic("TODO");
-        const name_range = self.ranges.pop() catch @panic("TODO");
-        const inner = self.get_type(words.range(type_range) catch unreachable, words);
+    pub fn push_procedure(self: *TypeChecker, parameter_count: u32, variable_start: u32) void {
+        const type_ = self.names.pop() catch @panic("TODO");
+        const name = self.names.pop() catch @panic("TODO");
+        const inner = self.get_type(type_);
         const offset: usize = self.generator.code.len;
 
         var cons = self.constants.pop() catch @panic("TODO");
@@ -361,7 +361,7 @@ pub const TypeChecker = struct {
 
         for (0..parameter_count) |_| {
             const c = self.variable_refs.pop() catch @panic("TODO");
-            c.reset();
+            c.len = 0;
         }
 
         for (variable_start..self.variable_constants.len) |_| {
@@ -373,39 +373,45 @@ pub const TypeChecker = struct {
         if (self.variable_refs.len != variable_start) @panic("TODO");
         if (self.variable_constants.len != variable_start) @panic("TODO");
 
-        self.generator.push_procedure();
-
+        var parameter_size: u32 = 0;
         var parameters = Array(*const ConstantType).new(parameter_count, self.arena) catch @panic("TODO");
         for (0..parameter_count) |i| {
-            parameters.set(self.parameters.pop() catch @panic("TODO"), i) catch unreachable;
+            const parameter = self.parameters.pop() catch @panic("TODO");
+            parameter_size += parameter.size;
+
+            parameters.set(parameter, i) catch unreachable;
         }
 
-        self.push_variable(name_range, Constant{ .Procedure = self.arena.create(ConstantProcedure, ConstantProcedure{
+        util.print(.Info, "--------------------- Procedure start ({}) - Offset ({}) ---------------", .{ name, offset });
+        self.generator.push_procedure(parameter_size, inner.size);
+        util.print(.Info, "--------------------- Procedure end ---------------", .{});
+
+        self.push_variable(name, Constant{ .Procedure = self.arena.create(ConstantProcedure, ConstantProcedure{
             .offset = offset,
             .inner = inner,
             .parameters = parameters,
             .usage = 0,
-        }) catch @panic("TODO") }, words);
+        }) catch @panic("TODO") });
     }
 
-    fn get_type(self: *TypeChecker, name: []const u8, words: *const String) *ConstantType {
-        const cons = (self.variables.get(name, words) orelse @panic("TODO: treat type not declared")).*.*;
+    fn get_type(self: *TypeChecker, name: []const u8) *ConstantType {
+        const cons = (self.variables.get(name) orelse @panic("TODO: treat type not declared")).*.*;
 
         if (@as(ConstantKind, cons) != Constant.Type) @panic("TODO");
 
         return cons.Type;
     }
 
-    fn get_procedure(self: *TypeChecker, name: []const u8, words: *const String) *const ConstantProcedure {
-        const cons = (self.variables.get(name, words) orelse @panic("TODO: treat type not declared")).*.*;
+    fn get_procedure(self: *TypeChecker, name: []const u8) *const ConstantProcedure {
+        const cons = (self.variables.get(name) orelse @panic("TODO: treat type not declared")).*.*;
 
         if (@as(ConstantKind, cons) != Constant.Procedure) @panic("TODO: treat type not declared");
 
         return cons.Procedure;
     }
 
-    pub fn generate(self: *TypeChecker, stream: Stream, words: *const String) void {
-        const main_procedure = self.get_procedure("main", words);
+    pub fn generate(self: *TypeChecker, stream: Stream) void {
+        const main_procedure = self.get_procedure("main");
         if (main_procedure.inner.size != 4) @panic("TODO: treat main procedure mismatch return type");
 
         self.generator.generate(stream, main_procedure.offset);
@@ -424,7 +430,7 @@ pub const TypeChecker = struct {
 
         self.variable_constants.deinit(self.arena);
         self.variable_refs.deinit(self.arena);
-        self.ranges.deinit(self.arena);
+        self.names.deinit(self.arena);
 
         self.arena.deinit();
     }

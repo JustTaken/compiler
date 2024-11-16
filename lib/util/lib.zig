@@ -90,7 +90,10 @@ pub const Logger = struct {
                             else => @panic("TODO"),
                         }
                     },
-                    else => @panic("TODO"),
+                    else => {
+                        std.debug.print("{}\n", .{type_info});
+                        @panic("TODO");
+                    },
                 }
 
                 arg_index += 1;

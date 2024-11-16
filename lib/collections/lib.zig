@@ -275,19 +275,19 @@ pub fn Vec(T: type) type {
     };
 }
 
-pub fn RangeMap(T: type) type {
+pub fn StringMap(T: type) type {
     return struct {
         value: [*]T,
-        key: [*]Range,
+        key: [*][]const u8,
         capacity: u32,
 
         const Self = @This();
 
         pub fn new(size: u32, arena: *Arena) error{OutOfMemory}!Self {
-            const key = try arena.alloc(Range, size);
+            const key = try arena.alloc([]const u8, size);
             const value = try arena.alloc(T, size);
 
-            @memset(key[0..size], Range.new(0, 0));
+            @memset(key[0..size], "");
 
             return .{
                 .value = value,
@@ -296,20 +296,20 @@ pub fn RangeMap(T: type) type {
             };
         }
 
-        pub fn push(self: *Self, key: Range, item: T, buffer: *const Vec(u8)) error{OutOfBounds}!void {
-            _ = try self.put(key, item, buffer);
+        pub fn push(self: *Self, key: []const u8, item: T) error{OutOfBounds}!void {
+            _ = try self.put(key, item);
         }
 
-        pub fn put(self: *Self, key: Range, item: T, buffer: *const Vec(u8)) error{OutOfBounds}!u32 {
+        pub fn put(self: *Self, key: []const u8, item: T) error{OutOfBounds}!u32 {
             if (self.capacity == 0) return error.OutOfBounds;
 
-            const h = util.hash(try buffer.range(key));
+            const h = util.hash(key);
 
             var code = h % self.capacity;
             var count: u32 = 0;
 
-            while (self.key[code].end > 0 and count < self.capacity) {
-                if (mem.equal(u8, try buffer.range(key), buffer.range(self.key[code]) catch @panic("TODO: Should be unreachable"))) {
+            while (self.key[code].len > 0 and count < self.capacity) {
+                if (mem.equal(u8, key, self.key[code])) {
                     break;
                 }
 
@@ -325,7 +325,7 @@ pub fn RangeMap(T: type) type {
             return code;
         }
 
-        pub fn get(self: *const Self, key: []const u8, buffer: *const Vec(u8)) ?*T {
+        pub fn get(self: *const Self, key: []const u8) ?*T {
             if (self.capacity == 0) return null;
 
             const h = util.hash(key);
@@ -333,8 +333,8 @@ pub fn RangeMap(T: type) type {
             var count: u32 = 0;
             var code = h % self.capacity;
 
-            while (self.key[code].end > 0 and count < self.capacity) {
-                if (mem.equal(u8, key, buffer.range(self.key[code]) catch @panic("TODO: I guess this is unreachable"))) {
+            while (self.key[code].len > 0 and count < self.capacity) {
+                if (mem.equal(u8, key, self.key[code])) {
                     return &self.value[code];
                 }
 
@@ -349,7 +349,7 @@ pub fn RangeMap(T: type) type {
             defer self.capacity = 0;
 
             arena.destroy(T, self.capacity);
-            arena.destroy(Range, self.capacity);
+            arena.destroy([]const u8, self.capacity);
         }
     };
 }

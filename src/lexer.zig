@@ -112,17 +112,17 @@ const TokenKind = enum {
 };
 
 pub const Token = union(TokenKind) {
-    Identifier: Range,
-    String: Range,
-    Number: Range,
+    Identifier: []const u8,
+    String: []const u8,
+    Number: []const u8,
     Keyword: Keyword,
     Operator: Operator,
     Symbol: Symbol,
 
     Eof,
 
-    pub const IDEN: Token = Token{ .Identifier = Range.new(0, 0) };
-    pub const NUMBER: Token = Token{ .Number = Range.new(0, 0) };
+    pub const IDEN: Token = Token{ .Identifier = "" };
+    pub const NUMBER: Token = Token{ .Number = "" };
     pub const PARENTESISLEFT: Token = Token{ .Symbol = Symbol.ParentesisLeft };
     pub const PARENTESISRIGHT: Token = Token{ .Symbol = Symbol.ParentesisRight };
     pub const COMMA: Token = Token{ .Symbol = Symbol.Comma };
@@ -195,6 +195,8 @@ pub const Lexer = struct {
     offset: u32,
     start: u32,
 
+    general_offset: u32,
+
     stream: Stream,
     arena: *Arena,
 
@@ -203,6 +205,7 @@ pub const Lexer = struct {
             .stream = stream,
             .offset = 0,
             .start = 0,
+            .general_offset = 0,
             .previous = Token.EOF,
             .current = Token.EOF,
             .arena = try allocator.child("Lexer", @sizeOf(Arena) + (mem.PAGE_SIZE >> 1)),
@@ -241,6 +244,7 @@ pub const Lexer = struct {
             mem.copy(u8, buffer[self.start..self.offset], buffer[0..len]);
 
             self.start = 0;
+            self.general_offset += self.offset;
             self.offset = len;
             self.content.set_len(len) catch unreachable;
             self.stream.read(&self.content) catch |e| switch (e) {
@@ -276,7 +280,9 @@ pub const Lexer = struct {
                 }
 
                 const string = self.content.range(Range.new(self.start, self.offset)) catch unreachable;
-                self.current = Token{ .Number = self.words.extend_range(string) catch unreachable };
+                const range = self.words.extend_range(string) catch @panic("TODO");
+
+                self.current = Token{ .Number = self.words.range(range) catch unreachable };
             } else if (util.is_alpha(c)) {
                 while (!self.at_end() and util.is_ascci(self.content.value(self.offset) catch unreachable)) {
                     self.offset += 1;
@@ -287,7 +293,8 @@ pub const Lexer = struct {
                 if (Keyword.from_string(string)) |keyword| {
                     self.current = Token{ .Keyword = keyword };
                 } else {
-                    self.current = Token{ .Identifier = self.words.extend_range(string) catch @panic("TODO") };
+                    const range = self.words.extend_range(string) catch @panic("TODO");
+                    self.current = Token{ .Identifier = self.words.range(range) catch unreachable };
                 }
             } else {
                 switch (c) {
@@ -346,9 +353,11 @@ pub const Lexer = struct {
 
                         self.offset += 1;
 
-                        self.current = Token{ .String = self.words.extend_range(
+                        const range = self.words.extend_range(
                             self.content.range(Range.new(self.start + 1, self.offset - 1)) catch unreachable,
-                        ) catch @panic("TODO") };
+                        ) catch @panic("TODO");
+
+                        self.current = Token{ .String = self.words.range(range) catch unreachable };
                     },
                     else => @panic("TODO"),
                 }
@@ -363,14 +372,15 @@ pub const Lexer = struct {
             return true;
         }
 
-        return false;
+        return self.current.eql(Token.EOF);
     }
 
     pub fn consume(self: *Lexer, token: Token) void {
         if (self.current.eql(token)) {
             self.advance();
         } else {
-            @panic("Should not happen");
+            util.print(.Info, "offset: {}", .{self.general_offset + self.offset});
+            @panic("TODO");
         }
     }
 

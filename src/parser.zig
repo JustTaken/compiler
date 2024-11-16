@@ -132,45 +132,42 @@ pub const Parser = struct {
         const operator = self.lexer.previous.Operator;
 
         self.parse(@enumFromInt(@intFromEnum(rule.precedence) + 1));
-        const words = &self.lexer.words;
 
         switch (operator) {
             .BangEqual => {
-                self.checker.push_binary(.Eq, words);
+                self.checker.push_binary(.Eq);
                 self.checker.push_unary(.Bang);
             },
             .GreaterEqual => {
-                self.checker.push_binary(.Lt, words);
+                self.checker.push_binary(.Lt);
                 self.checker.push_unary(.Bang);
             },
             .LessEqual => {
-                self.checker.push_binary(.Gt, words);
+                self.checker.push_binary(.Gt);
                 self.checker.push_unary(.Bang);
             },
-            .EqualEqual => self.checker.push_binary(.Eq, words),
-            .Greater => self.checker.push_binary(.Gt, words),
-            .Less => self.checker.push_binary(.Lt, words),
-            .Plus => self.checker.push_binary(.Add, words),
-            .Minus => self.checker.push_binary(.Sub, words),
-            .Star => self.checker.push_binary(.Mul, words),
-            .Slash => self.checker.push_binary(.Div, words),
+            .EqualEqual => self.checker.push_binary(.Eq),
+            .Greater => self.checker.push_binary(.Gt),
+            .Less => self.checker.push_binary(.Lt),
+            .Plus => self.checker.push_binary(.Add),
+            .Minus => self.checker.push_binary(.Sub),
+            .Star => self.checker.push_binary(.Mul),
+            .Slash => self.checker.push_binary(.Div),
             else => @panic("TODO"),
         }
     }
 
     fn identifier(self: *Parser) void {
-        const range = self.lexer.previous.Identifier;
-        self.checker.ranges.push(range) catch @panic("TODO");
+        const name = self.lexer.previous.Identifier;
+        self.checker.names.push(name) catch @panic("TODO");
 
         if (self.lexer.current.eql(Token.PARENTESISLEFT) or self.lexer.current.eql(Token.BRACELEFT)) {} else {
-            self.checker.push_identifier(&self.lexer.words);
+            self.checker.push_identifier();
         }
     }
 
     fn number(self: *Parser) void {
-        const range = self.lexer.previous.Number;
-
-        self.checker.push_number(range, &self.lexer.words);
+        self.checker.push_number(self.lexer.previous.Number);
     }
 
     fn construct(self: *Parser) void {
@@ -185,11 +182,11 @@ pub const Parser = struct {
             self.parse(.Assignment);
             self.lexer.consume(Token.COMMA);
 
-            self.checker.ranges.push(name.Identifier) catch @panic("TODO");
+            self.checker.names.push(name.Identifier) catch @panic("TODO");
             field_count += 1;
         }
 
-        self.checker.push_construct(field_count, &self.lexer.words);
+        self.checker.push_construct(field_count);
     }
 
     fn call(self: *Parser) void {
@@ -206,7 +203,7 @@ pub const Parser = struct {
             argument_count += 1;
         }
 
-        self.checker.push_call(argument_count, &self.lexer.words);
+        self.checker.push_call(argument_count);
     }
 
     fn typ(self: *Parser) void {
@@ -227,7 +224,7 @@ pub const Parser = struct {
 
                 self.lexer.consume(Token.IDEN);
                 self.lexer.consume(Token.COMMA);
-                self.checker.ranges.extend(&.{ field_name.Identifier, field_type.Identifier }) catch @panic("TODO");
+                self.checker.names.extend(&.{ field_name.Identifier, field_type.Identifier }) catch @panic("TODO");
 
                 field_count += 1;
             }
@@ -238,18 +235,18 @@ pub const Parser = struct {
             self.lexer.consume(Token.NUMBER);
             self.lexer.consume(Token.SEMICOLON);
 
-            size += @intCast(util.parse(self.lexer.words.range(type_size.Number) catch unreachable));
+            size += @intCast(util.parse(type_size.Number));
         }
 
-        self.checker.ranges.push(name.Identifier) catch @panic("TODO");
-        self.checker.push_type(field_count, size, &self.lexer.words);
+        self.checker.names.push(name.Identifier) catch @panic("TODO");
+        self.checker.push_type(field_count, size);
     }
 
     fn property(self: *Parser) void {
         const name = self.lexer.current;
         self.lexer.consume(Token.IDEN);
 
-        self.checker.push_property(name.Identifier, &self.lexer.words);
+        self.checker.push_property(name.Identifier);
     }
 
     fn procedure(self: *Parser) void {
@@ -277,9 +274,9 @@ pub const Parser = struct {
             const kind = self.lexer.current;
 
             self.lexer.consume(Token.IDEN);
-            self.checker.ranges.extend(&.{ param.Identifier, kind.Identifier }) catch @panic("TODO");
+            self.checker.names.extend(&.{ param.Identifier, kind.Identifier }) catch @panic("TODO");
 
-            parameters_size += self.checker.push_parameter(parameters_size, &self.lexer.words);
+            parameters_size += self.checker.push_parameter(parameters_size);
             parameter_count += 1;
         }
 
@@ -291,8 +288,8 @@ pub const Parser = struct {
         self.lexer.consume(Token.BRACELEFT);
         self.scope();
 
-        self.checker.ranges.extend(&.{ name.Identifier, return_type.Identifier }) catch @panic("TODO");
-        self.checker.push_procedure(parameter_count, variable_count, &self.lexer.words);
+        self.checker.names.extend(&.{ name.Identifier, return_type.Identifier }) catch @panic("TODO");
+        self.checker.push_procedure(parameter_count, variable_count);
     }
 
     fn let(self: *Parser) void {
@@ -312,8 +309,8 @@ pub const Parser = struct {
         self.parse(.Assignment);
 
         self.lexer.consume(Token.SEMICOLON);
-        self.checker.ranges.extend(&.{ iden.Identifier, kind.Identifier }) catch @panic("TODO");
-        self.checker.push_let(&self.lexer.words);
+        self.checker.names.extend(&.{ iden.Identifier, kind.Identifier }) catch @panic("TODO");
+        self.checker.push_let();
     }
 
     fn string(self: *Parser) void {
@@ -380,7 +377,7 @@ pub const Parser = struct {
     }
 
     pub fn compile(self: *Parser, stream: Stream) void {
-        self.checker.generate(stream, &self.lexer.words);
+        self.checker.generate(stream);
     }
 
     pub fn deinit(self: *Parser) void {

@@ -153,8 +153,8 @@ pub const BinaryOperation = struct {
             .Register => |rd| switch (self.source) {
                 .Register => |rs| buffer.extend(&.{ 0x01, 0b11000000 + (rs.value() << 3) + rd.value() }) catch @panic("TODO"),
                 .Immediate => |i| buffer.extend(&.{ 0x83, 0b11000000 + rd.value(), to_bytes(i)[0] }) catch @panic("TODO"),
+                .Memory => |m| buffer.extend(&.{ 0x03, 0b01000000 + rd.value(), 0b00100000 + m.register.value(), to_bytes(m.offset)[0] }) catch @panic("TODO"),
                 .Stack => @panic("TODO"),
-                .Memory => @panic("TODO"),
             },
             .Memory => |m| switch (self.source) {
                 .Register => |r| buffer.extend(&.{ 0x01, 0b01000000 + (r.value() << 3) + m.register.value() }) catch @panic("TODO"),
@@ -176,6 +176,24 @@ pub const BinaryOperation = struct {
             },
             .Memory => |m| switch (self.source) {
                 .Register => |r| buffer.extend(&.{ 0x029, 0b01000000 + (r.value() << 3) + m.register.value() }) catch @panic("TODO"),
+                .Immediate => @panic("TODO"),
+                .Stack => @panic("TODO"),
+                .Memory => @panic("TODO"),
+            },
+            .Stack => unreachable,
+        }
+    }
+
+    fn write_mul(self: BinaryOperation, buffer: *String) void {
+        switch (self.destination) {
+            .Register => |rd| switch (self.source) {
+                .Immediate => |i| buffer.extend(&.{ 0x6B, 0b01101000 + rd.value(), to_bytes(i)[0] }) catch @panic("TODO"),
+                .Memory => |m| buffer.extend(&.{ 0x0F, 0xAF, 0b01000000 + rd.value(), 0b00100000 + m.register.value(), to_bytes(m.offset)[0] }) catch @panic("TODO"),
+                .Register => @panic("TODO"),
+                .Stack => @panic("TODO"),
+            },
+            .Memory => |_| switch (self.source) {
+                .Register => @panic("TODO"),
                 .Immediate => @panic("TODO"),
                 .Stack => @panic("TODO"),
                 .Memory => @panic("TODO"),
@@ -225,7 +243,7 @@ pub const Operation = union(OperationKind) {
                 .Mov => binary.write_mov(buffer),
                 .Add => binary.write_add(buffer),
                 .Sub => binary.write_sub(buffer),
-                .Mul => @panic("TODO"),
+                .Mul => binary.write_mul(buffer),
             },
         }
     }
@@ -367,7 +385,7 @@ pub const Generator = struct {
         }
     }
 
-    pub fn push_procedure(self: *Generator) void {
+    pub fn push_procedure(self: *Generator, parameter_size: u32, return_size: u32) void {
         defer {
             self.manager.reset();
             self.operations.clear();
@@ -376,19 +394,20 @@ pub const Generator = struct {
         var startup_instructions = Vec(Operation).new(2, self.arena) catch @panic("TODO");
         defer startup_instructions.deinit(self.arena);
 
+        if (parameter_size > 0 or self.manager.stack > 0 or return_size > mem.BASE_SIZE) {
+            startup_instructions.push(Operation{ .Binary = BinaryOperation{
+                .kind = BinaryKind.Mov,
+                .source = Source{ .Register = Register.Rsp },
+                .destination = Destination{ .Register = Register.Rbp },
+            } }) catch unreachable;
+        }
+
         if (self.manager.stack > 0) {
-            startup_instructions.extend(&.{
-                Operation{ .Binary = BinaryOperation{
-                    .kind = BinaryKind.Mov,
-                    .source = Source{ .Register = Register.Rsp },
-                    .destination = Destination{ .Register = Register.Rbp },
-                } },
-                Operation{ .Binary = BinaryOperation{
-                    .kind = BinaryKind.Sub,
-                    .source = Source{ .Immediate = self.manager.stack },
-                    .destination = Destination{ .Register = Register.Rsp },
-                } },
-            }) catch unreachable;
+            startup_instructions.push(Operation{ .Binary = BinaryOperation{
+                .kind = BinaryKind.Sub,
+                .source = Source{ .Immediate = self.manager.stack },
+                .destination = Destination{ .Register = Register.Rsp },
+            } }) catch unreachable;
 
             self.operations.push(Operation{ .Binary = BinaryOperation{
                 .kind = BinaryKind.Mov,
@@ -399,8 +418,6 @@ pub const Generator = struct {
 
         self.operations.push(Operation.Ret) catch @panic("TODO");
 
-        util.print(.Info, "------------------- Procedure start ----------------------", .{});
-
         for (startup_instructions.offset(0) catch unreachable) |operation| {
             operation.write(&self.code);
         }
@@ -408,8 +425,6 @@ pub const Generator = struct {
         for (self.operations.offset(0) catch unreachable) |operation| {
             operation.write(&self.code);
         }
-
-        util.print(.Info, "------------------- Procedure end ------------------------", .{});
 
         self.manager.reset();
         self.operations.clear();

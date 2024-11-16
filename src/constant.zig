@@ -52,6 +52,18 @@ pub const ConstantBinary = struct {
                 else => @panic("TODO"),
             };
         }
+
+        pub fn print(self: Operator, formater: util.Formater) error{Overflow}!void {
+            switch (self) {
+                Operator.Add => try formater("Operator::Add", .{}),
+                Operator.Sub => try formater("Operator::Sub", .{}),
+                Operator.Mul => try formater("Operator::Mul", .{}),
+                Operator.Div => try formater("Operator::Div", .{}),
+                Operator.Gt => try formater("Operator::Gt", .{}),
+                Operator.Lt => try formater("Operator::Lt", .{}),
+                Operator.Eq => try formater("Operator::Eq", .{}),
+            }
+        }
     };
 };
 
@@ -64,6 +76,13 @@ pub const ConstantUnary = struct {
     pub const Operator = enum(usize) {
         Bang,
         Minus,
+
+        pub fn print(self: Operator, formater: util.Formater) error{Overflow}!void {
+            switch (self) {
+                Operator.Bang => try formater("Operator::Bang", .{}),
+                Operator.Minus => try formater("Operator::Minus", .{}),
+            }
+        }
     };
 };
 
@@ -107,6 +126,16 @@ pub const ConstantScope = struct {
             return null;
         }
     }
+
+    pub fn print(self: ConstantConstruct, formater: util.Formater) error{Overflow}!void {
+        try formater("\n", .{});
+
+        if (self.return_value) |constant| {
+            try formater("{}", .{constant});
+        }
+
+        try formater("\n", .{});
+    }
 };
 
 pub const ConstantConstruct = struct {
@@ -114,6 +143,16 @@ pub const ConstantConstruct = struct {
     constants: Array(Constant),
     source: ?Source,
     usage: usize,
+
+    pub fn print(self: ConstantConstruct, formater: util.Formater) error{Overflow}!void {
+        try formater("\n", .{});
+
+        for (self.constants.offset(0) catch unreachable) |constant| {
+            try formater("{}\n", .{constant});
+        }
+
+        try formater("\n", .{});
+    }
 };
 
 pub const ConstantFieldAcess = struct {
@@ -134,22 +173,30 @@ const ConstantUsageModification = enum(usize) {
             .Add => number + 1,
         };
     }
+
+    pub fn print(self: ConstantUsageModification, formater: util.Formater) error{Overflow}!void {
+        switch (self) {
+            .Remove => try formater("Remove", .{}),
+            .Add => try formater("Add", .{}),
+        }
+    }
 };
 
 pub const ConstantType = struct {
+    name: []const u8,
     size: u32,
     alignment: u32,
     fields: Array(Field),
     usage: usize,
 
     pub const Field = struct {
-        name: Range,
+        name: []const u8,
         inner: *ConstantType,
     };
 
-    pub fn field_index(self: *const ConstantType, range: Range, words: *const String) error{NotFound}!usize {
+    pub fn field_index(self: *const ConstantType, name: []const u8) error{NotFound}!usize {
         for (self.fields.offset(0) catch unreachable, 0..) |field, i| {
-            if (mem.equal(u8, words.range(field.name) catch unreachable, words.range(range) catch unreachable)) {
+            if (mem.equal(u8, field.name, name)) {
                 return i;
             }
         }
@@ -173,6 +220,16 @@ pub const ConstantProcedure = struct {
     inner: *ConstantType,
     parameters: Array(*const ConstantType),
     usage: usize,
+
+    pub fn print(self: ConstantProcedure, formater: util.Formater) error{Overflow}!void {
+        try formater("\n", .{});
+
+        for (self.parameters.offset(0) catch unreachable) |parameter| {
+            try formater("{}", .{parameter.size});
+        }
+
+        try formater("\n", .{});
+    }
 };
 
 pub const ConstantKind = enum {
@@ -252,7 +309,10 @@ pub const Constant = union(ConstantKind) {
             .Parameter => |parameter| parameter.usage = mod.apply(parameter.usage),
             .Procedure => |procedure| procedure.usage = mod.apply(procedure.usage),
             .Type => |typ| typ.usage = mod.apply(typ.usage),
-            .FieldAcess => |field| field.usage = mod.apply(field.usage),
+            .FieldAcess => |field| {
+                field.usage = mod.apply(field.usage);
+                field.constant.usage_count(mod);
+            },
             .Unary => |unary| {
                 unary.usage = mod.apply(unary.usage);
 
@@ -348,7 +408,16 @@ pub const Constant = union(ConstantKind) {
             .Number => |number| Source{ .Immediate = number.value },
             .Call => |call| call.source,
             .Construct => |construct| construct.source,
-            .FieldAcess => |field| field.source,
+            .FieldAcess => |field| blk: {
+                if (field.source) |source| {
+                    break :blk source;
+                } else if (field.constant.get_source()) |source| {
+                    field.source = source;
+                    break :blk source;
+                }
+
+                break :blk null;
+            },
             .Binary => |binary| binary.source,
             .Scope => |scope| blk: {
                 if (scope.return_value) |constant| {
@@ -514,14 +583,13 @@ pub const Constant = union(ConstantKind) {
                 }
 
                 const constant_source = constant_source_opt orelse @panic("TODO");
-                const source = Source{
-                    .Memory = Memory{
-                        .register = constant_source.Memory.register,
-                        .offset = constant_source.Memory.offset - field.constant.get_type().?.offset(field.index),
-                    },
-                };
 
                 if (@as(SourceKind, constant_source) != SourceKind.Memory) @panic("TODO");
+
+                const source = Source{ .Memory = Memory{
+                    .register = constant_source.Memory.register,
+                    .offset = constant_source.Memory.offset - field.constant.get_type().?.offset(field.index),
+                } };
 
                 gen.push_operation(Operation{ .Binary = BinaryOperation{
                     .kind = operation,
@@ -529,17 +597,14 @@ pub const Constant = union(ConstantKind) {
                     .destination = destination orelse @panic("TODO"),
                 } });
 
-                field.source = source;
+                field.constant.unuse(gen);
             },
             .Ref => |constant| {
                 const dst = destination orelse @panic("TODO");
 
                 if (constant.get_source()) |_| {
                     constant.evaluate(operation, dst, gen, change_count);
-
-                    if (constant.get_usage() == 0) {
-                        constant.unuse(gen);
-                    }
+                    constant.unuse(gen);
                 } else if (constant.get_usage() > 1) {
                     const register = gen.manager.get() catch @panic("TODO");
 
@@ -559,12 +624,14 @@ pub const Constant = union(ConstantKind) {
             .Procedure, .Type => unreachable,
             .Ref => |constant| constant.unuse(gen),
             .FieldAcess => |field| {
+                if (field.usage > 0) return;
                 if (field.source) |source| {
                     gen.give_back(source) catch @panic("TODO");
                     field.source = null;
                 }
             },
             .Call => |call| {
+                if (call.usage > 0) return;
                 if (call.procedure.inner.size > 4) {
                     gen.push_operation(Operation{ .Binary = BinaryOperation{
                         .kind = BinaryOperationKind.Add,
@@ -577,18 +644,21 @@ pub const Constant = union(ConstantKind) {
             },
             .Unary => |unary| unary.constant.unuse(gen),
             .Binary => |binary| {
+                if (binary.usage > 0) return;
                 if (binary.source) |source| {
                     gen.give_back(source) catch @panic("TODO");
                     binary.source = null;
                 }
             },
             .Construct => |construct| {
+                if (construct.usage > 0) return;
                 if (construct.source) |source| {
                     gen.give_back(source) catch @panic("TODO");
                     construct.source = null;
                 }
             },
             .Scope => |scope| {
+                if (scope.usage > 0) return;
                 if (scope.return_value) |constant| {
                     constant.unuse(gen);
                 }
@@ -650,6 +720,22 @@ pub const Constant = union(ConstantKind) {
 
                 scope.constants.deinit(arena);
             },
+        }
+    }
+
+    pub fn print(self: Constant, formater: util.Formater) error{Overflow}!void {
+        switch (self) {
+            .Number => |n| try formater("Constant::Number({})", .{n.value}),
+            .Parameter => |p| try formater("Constant::Parameter({})", .{p.inner.size}),
+            .Call => |c| try formater("Constant::Call({})", .{c.procedure.*}),
+            .Binary => |b| try formater("Constant::Binary({} {} {})", .{ b.left, b.operator, b.right }),
+            .Unary => |u| try formater("Constant::Unary({} {})", .{ u.operator, u.constant }),
+            .Construct => |c| try formater("Constant::Construct({})", .{c.*}),
+            .FieldAcess => |f| try formater("Constant::FieldAccess({})", .{f.inner.size}),
+            .Ref => |f| try formater("Constant::Ref({})", .{f.*}),
+            .Scope => |s| try formater("Constant::Scope(null)", .{s.*}),
+            .Procedure => |p| try formater("Constant::Procedure({})", .{p.offset}),
+            .Type => |t| try formater("Constant::Type({})", .{t.size}),
         }
     }
 };
