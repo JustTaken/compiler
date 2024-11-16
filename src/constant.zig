@@ -207,7 +207,8 @@ pub const ConstantType = struct {
     pub fn offset(self: *const ConstantType, index: usize) usize {
         var size: usize = 0;
 
-        for (self.fields.range(Range.new(0, @intCast(index + 1))) catch unreachable) |field| {
+        for (0..index) |i| {
+            const field = self.fields.items[i];
             size += field.inner.size;
         }
 
@@ -470,7 +471,7 @@ pub const Constant = union(ConstantKind) {
 
                     call.source = Source{ .Memory = Memory{
                         .register = Register.Rsp,
-                        .offset = call.procedure.inner.size,
+                        .offset = 0,
                     } };
                 } else {
                     call.source = Source{ .Register = Register.Rax };
@@ -554,20 +555,23 @@ pub const Constant = union(ConstantKind) {
 
                 var size: u32 = 0;
 
-                for (construct.constants.offset(0) catch unreachable) |constant| {
-                    size += constant.get_type().?.size;
+                for (0..construct.constants.len) |i| {
+                    const constant = construct.constants.items[i];
+                    const typ = constant.get_type() orelse @panic("TODO");
 
                     constant.evaluate(
                         BinaryOperationKind.Mov,
                         Destination{
                             .Memory = Memory{
                                 .register = dst.Memory.register,
-                                .offset = dst.Memory.offset - size,
+                                .offset = dst.Memory.offset + size,
                             },
                         },
                         gen,
                         change_count,
                     );
+
+                    size += typ.size;
                 }
 
                 construct.source = dst.as_source();
@@ -585,17 +589,23 @@ pub const Constant = union(ConstantKind) {
                 const constant_source = constant_source_opt orelse @panic("TODO");
 
                 if (@as(SourceKind, constant_source) != SourceKind.Memory) @panic("TODO");
+                const typ = field.constant.get_type() orelse @panic("TODO");
+                const offset = typ.offset(field.index);
 
                 const source = Source{ .Memory = Memory{
                     .register = constant_source.Memory.register,
-                    .offset = constant_source.Memory.offset - field.constant.get_type().?.offset(field.index),
+                    .offset = constant_source.Memory.offset + offset,
                 } };
 
-                gen.push_operation(Operation{ .Binary = BinaryOperation{
-                    .kind = operation,
-                    .source = source,
-                    .destination = destination orelse @panic("TODO"),
-                } });
+                field.source = source;
+
+                if (destination) |dst| {
+                    gen.push_operation(Operation{ .Binary = BinaryOperation{
+                        .kind = operation,
+                        .source = source,
+                        .destination = dst,
+                    } });
+                } else return;
 
                 field.constant.unuse(gen);
             },
@@ -623,13 +633,7 @@ pub const Constant = union(ConstantKind) {
             .Parameter, .Number => {},
             .Procedure, .Type => unreachable,
             .Ref => |constant| constant.unuse(gen),
-            .FieldAcess => |field| {
-                if (field.usage > 0) return;
-                if (field.source) |source| {
-                    gen.give_back(source) catch @panic("TODO");
-                    field.source = null;
-                }
-            },
+            .FieldAcess => |field| field.constant.unuse(gen),
             .Call => |call| {
                 if (call.usage > 0) return;
                 if (call.procedure.inner.size > 4) {
@@ -671,7 +675,13 @@ pub const Constant = union(ConstantKind) {
             .Ref => {},
             .Parameter => arena.destroy(ConstantParameter, 1),
             .Number => arena.destroy(ConstantNumber, 1),
-            .FieldAcess => arena.destroy(ConstantFieldAcess, 1),
+            .FieldAcess => |field| {
+                arena.destroy(ConstantFieldAcess, 1);
+
+                if (@as(ConstantKind, field.constant) == .FieldAcess) {
+                    field.constant.deinit(arena);
+                }
+            },
             .Call => |call| {
                 arena.destroy(ConstantCall, 1);
 

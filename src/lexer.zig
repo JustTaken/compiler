@@ -309,7 +309,15 @@ pub const Lexer = struct {
                     '-' => self.current = Token{ .Operator = Operator.Minus },
                     '+' => self.current = Token{ .Operator = Operator.Plus },
                     '*' => self.current = Token{ .Operator = Operator.Star },
-                    '/' => self.current = Token{ .Operator = Operator.Slash },
+                    '/' => {
+                        if (self.assert('/')) {
+                            while (!self.at_end() and self.content.value(self.offset) catch unreachable != '\n') {
+                                self.offset += 1;
+                            }
+
+                            self.advance();
+                        } else self.current = Token{ .Operator = Operator.Slash };
+                    },
                     '!' => {
                         if (self.assert('=')) {
                             self.current = Token{ .Operator = Operator.BangEqual };

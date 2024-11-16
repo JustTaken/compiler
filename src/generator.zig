@@ -226,7 +226,7 @@ pub const Operation = union(OperationKind) {
     }
 
     fn write(self: Operation, buffer: *String) void {
-        util.print(.Info, "{}", .{self});
+        // util.print(.Info, "{}", .{self});
 
         switch (self) {
             .Syscall => buffer.extend(&.{ 0x0F, 0x05 }) catch @panic("TODO"),
@@ -381,7 +381,7 @@ pub const Generator = struct {
         if (@as(SourceKind, source) == SourceKind.Register) {
             try self.manager.give_back(source.Register);
         } else {
-            @panic("TODO");
+            // @panic("TODO");
         }
     }
 

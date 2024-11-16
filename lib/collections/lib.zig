@@ -130,6 +130,12 @@ pub fn Array(T: type) type {
             return self.items[r.start..r.end];
         }
 
+        pub fn get_back(self: *const Self, o: usize) error{OutOfBounds}!T {
+            if (o >= self.len) return error.OutOfBounds;
+
+            return self.items[self.len - o - 1];
+        }
+
         pub fn deinit(self: *Self, arena: *Arena) void {
             defer self.len = 0;
             arena.destroy(T, self.len);

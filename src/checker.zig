@@ -343,6 +343,13 @@ pub const TypeChecker = struct {
         var cons = self.constants.pop() catch @panic("TODO");
         if (!cons.set_type(inner)) @panic("Should not happen");
 
+        var parameter_size: u32 = 0;
+        for (0..parameter_count) |i| {
+            const parameter = self.parameters.get_back(i) catch @panic("TODO");
+
+            parameter_size += parameter.size;
+        }
+
         const return_destination = blk: {
             if (inner.size <= 4) {
                 break :blk Destination{
@@ -350,7 +357,7 @@ pub const TypeChecker = struct {
                 };
             } else {
                 break :blk Destination{
-                    .Memory = Memory{ .register = Register.Rbp, .offset = inner.size },
+                    .Memory = Memory{ .register = Register.Rbp, .offset = parameter_size },
                 };
             }
         };
@@ -365,26 +372,24 @@ pub const TypeChecker = struct {
         }
 
         for (variable_start..self.variable_constants.len) |_| {
-            const c = self.variable_constants.pop() catch @panic("TODO");
+            const c = self.variable_constants.pop() catch unreachable;
             c.deinit(self.arena);
         }
 
         if (self.constants.len > 0) @panic("TODO");
         if (self.variable_refs.len != variable_start) @panic("TODO");
-        if (self.variable_constants.len != variable_start) @panic("TODO");
+        if (self.variable_constants.len != variable_start) unreachable;
 
-        var parameter_size: u32 = 0;
         var parameters = Array(*const ConstantType).new(parameter_count, self.arena) catch @panic("TODO");
         for (0..parameter_count) |i| {
             const parameter = self.parameters.pop() catch @panic("TODO");
-            parameter_size += parameter.size;
 
             parameters.set(parameter, i) catch unreachable;
         }
 
-        util.print(.Info, "--------------------- Procedure start ({}) - Offset ({}) ---------------", .{ name, offset });
+        // util.print(.Info, "--------------------- Procedure start ({}) - Offset ({}) ---------------", .{ name, offset });
         self.generator.push_procedure(parameter_size, inner.size);
-        util.print(.Info, "--------------------- Procedure end ---------------", .{});
+        // util.print(.Info, "--------------------- Procedure end ---------------", .{});
 
         self.push_variable(name, Constant{ .Procedure = self.arena.create(ConstantProcedure, ConstantProcedure{
             .offset = offset,
