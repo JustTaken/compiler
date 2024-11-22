@@ -52,7 +52,7 @@ pub const Logger = struct {
         const ArgsType = @TypeOf(args);
         const args_type_info = @typeInfo(ArgsType);
 
-        if (args_type_info != .Struct) {
+        if (args_type_info != .@"struct") {
             @compileError("expected tuple or struct argument, found " ++ @typeName(ArgsType));
         }
 
@@ -62,27 +62,27 @@ pub const Logger = struct {
         inline while (comptime iter.next()) |char| {
             if (char == '{') {
                 if (comptime iter.next().? != '}') @panic("TODO: support other formats");
-                if (arg_index >= args_type_info.Struct.fields.len) {
+                if (arg_index >= args_type_info.@"struct".fields.len) {
                     buffer.extend("\"ERROR: NO MORE ARGUMENTS\"") catch return error.Overflow;
 
                     continue;
                 }
 
-                const field = args_type_info.Struct.fields[arg_index];
+                const field = args_type_info.@"struct".fields[arg_index];
                 const type_info = @typeInfo(field.type);
 
                 switch (type_info) {
-                    .Struct, .Union, .Enum => try @field(args, field.name).print(format),
-                    .ComptimeInt, .Int => parse_int(@intCast(@field(args, field.name))),
-                    .Pointer => |p| {
+                    .@"struct", .@"union", .@"enum"=> try @field(args, field.name).print(format),
+                    .comptime_int, .int => parse_int(@intCast(@field(args, field.name))),
+                    .pointer => |p| {
                         const child_info = @typeInfo(p.child);
                         switch (child_info) {
-                            .Array => {
-                                if (!mem.equal(u8, @typeName(child_info.Array.child), @typeName(u8))) @panic("TODO");
+                            .array => {
+                                if (!mem.equal(u8, @typeName(child_info.array.child), @typeName(u8))) @panic("TODO");
 
                                 buffer.extend(@field(args, field.name)) catch return error.Overflow;
                             },
-                            .Int => |i| {
+                            .int => |i| {
                                 if (i.bits != 8) @panic("TODO");
 
                                 buffer.extend(@field(args, field.name)) catch return error.Overflow;
