@@ -160,7 +160,6 @@ pub const TypeChecker = struct {
             .right = right,
             .inner = inner,
             .operator = operator,
-            .source = null,
             .usage = 0,
         }) catch @panic("TODO") }) catch @panic("TODO");
     }
@@ -171,7 +170,6 @@ pub const TypeChecker = struct {
         self.constants.push(Constant{ .Unary = self.arena.create(ConstantUnary, ConstantUnary{
             .constant = cons,
             .operator = operator,
-            .source = null,
             .usage = 0,
         }) catch @panic("TODO") }) catch @panic("TODO");
     }
@@ -197,7 +195,6 @@ pub const TypeChecker = struct {
         self.constants.push(Constant{ .Call = self.arena.create(ConstantCall, ConstantCall{
             .procedure = procedure,
             .arguments = arguments,
-            .source = null,
             .usage = 0,
         }) catch @panic("TODO") }) catch @panic("TODO");
     }
@@ -234,7 +231,6 @@ pub const TypeChecker = struct {
                     .index = index,
                     .constant = Constant{ .FieldAcess = field },
                     .usage = 0,
-                    .source = null,
                     .inner = field.inner.fields.items[index].inner,
                 }) catch @panic("TODO") };
             },
@@ -245,7 +241,6 @@ pub const TypeChecker = struct {
                     .index = index,
                     .constant = Constant{ .Call = call },
                     .usage = 0,
-                    .source = null,
                     .inner = call.procedure.inner.fields.items[index].inner,
                 }) catch @panic("TODO") };
             },
@@ -330,7 +325,6 @@ pub const TypeChecker = struct {
             .constants = constants,
             .inner = inner,
             .usage = 0,
-            .source = null,
         }) catch @panic("TODO") }) catch @panic("TODO");
     }
 
@@ -343,27 +337,10 @@ pub const TypeChecker = struct {
         var cons = self.constants.pop() catch @panic("TODO");
         if (!cons.set_type(inner)) @panic("Should not happen");
 
-        var parameter_size: u32 = 0;
-        for (0..parameter_count) |i| {
-            const parameter = self.parameters.get_back(i) catch @panic("TODO");
-
-            parameter_size += parameter.size;
-        }
-
-        const return_destination = blk: {
-            if (inner.size <= 4) {
-                break :blk Destination{
-                    .Register = Register.Rax,
-                };
-            } else {
-                break :blk Destination{
-                    .Memory = Memory{ .register = Register.Rbp, .offset = parameter_size },
-                };
-            }
-        };
-
         cons.usage_count(.Add);
-        cons.evaluate(.Mov, return_destination, &self.generator, true);
+
+        self.generator.push_procedure(&cons);
+
         cons.deinit(self.arena);
 
         for (0..parameter_count) |_| {
@@ -386,10 +363,6 @@ pub const TypeChecker = struct {
 
             parameters.set(parameter, i) catch unreachable;
         }
-
-        // util.print(.Info, "--------------------- Procedure start ({}) - Offset ({}) ---------------", .{ name, offset });
-        self.generator.push_procedure(parameter_size, inner.size);
-        // util.print(.Info, "--------------------- Procedure end ---------------", .{});
 
         self.push_variable(name, Constant{ .Procedure = self.arena.create(ConstantProcedure, ConstantProcedure{
             .offset = offset,
