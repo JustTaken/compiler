@@ -2,6 +2,7 @@ const collections = @import("collections");
 const mem = @import("mem");
 const util = @import("util");
 const elf = @import("elf.zig");
+const constant = @import("constant.zig");
 
 const Arena = mem.Arena;
 
@@ -10,6 +11,8 @@ const Stream = collections.Stream;
 const String = collections.String;
 const ProgramHeader = elf.ProgramHeader;
 const ElfHeader = elf.Header;
+
+const Constant = constant.Constant;
 
 pub const Register = enum(u8) {
     Rax,
@@ -226,7 +229,7 @@ pub const Operation = union(OperationKind) {
     }
 
     fn write(self: Operation, buffer: *String) void {
-        // util.print(.Info, "{}", .{self});
+        util.print(.Info, "{}", .{self});
 
         switch (self) {
             .Syscall => buffer.extend(&.{ 0x0F, 0x05 }) catch @panic("TODO"),
@@ -286,11 +289,6 @@ pub const Operation = union(OperationKind) {
     }
 };
 
-pub const GeneratorError = error{
-    OutOfRegisters,
-    SourceNotBeingUsed,
-};
-
 pub const Generator = struct {
     code: String,
     data: String,
@@ -299,60 +297,55 @@ pub const Generator = struct {
 
     arena: *Arena,
 
+    pub const Error = error{
+        OutOfRegisters,
+        SourceNotBeingUsed,
+    };
+
     const Manager = struct {
         free: Vec(Register),
-        used: Vec(Register),
+	resources: Vec(Resource),
         stack: usize,
+
+	pub const Resource = struct {
+	    variant: Variant,
+	    ptr: *const Constant,
+
+	    const Kind = enum {
+		Register,
+		Memory,
+	    };
+
+	    const Variant = union(Kind) {
+		Register: Register,
+		Memory: Memory,
+
+	    };
+	};
 
         fn new(arena: *Arena) error{OutOfMemory}!Manager {
             const usable_registers = &.{
-                Register.Rax, Register.Rcx, Register.Rdx, Register.Rbx, Register.Rdi,
+                Register.Rcx, Register.Rdi, Register.Rdx, Register.Rbx, Register.Rax,
             };
 
-            var used = try Vec(Register).new(usable_registers.len, arena);
-            errdefer used.deinit(arena);
+            var resources = try Vec(Resource).new(usable_registers.len, arena);
+            errdefer resources.deinit(arena);
 
             var free = try Vec(Register).new(usable_registers.len, arena);
-            errdefer used.deinit(arena);
+            errdefer free.deinit(arena);
 
             free.extend(usable_registers) catch unreachable;
 
             return Manager{
-                .used = used,
+                .resources = resources,
                 .free = free,
                 .stack = 0,
             };
         }
 
-        pub fn get(self: *Manager) GeneratorError!Register {
-            const r = self.free.pop() catch return GeneratorError.OutOfRegisters;
-            self.used.push(r) catch unreachable;
-
-            return r;
-        }
-
-        pub fn give_back(self: *Manager, r: Register) GeneratorError!void {
-            for (self.used.offset(0) catch unreachable, 0..) |use, i| {
-                if (use == r) {
-                    self.used.remove(i) catch unreachable;
-                    self.free.push(r) catch unreachable;
-
-                    return;
-                }
-            }
-
-            return GeneratorError.SourceNotBeingUsed;
-        }
-
-        fn reset(self: *Manager) void {
-            if (self.used.len > 0) unreachable;
-
-            self.stack = 0;
-        }
-
         fn deinit(self: *Manager, arena: *Arena) void {
             self.free.deinit(arena);
-            self.used.deinit(arena);
+            self.resources.deinit(arena);
         }
     };
 
@@ -377,7 +370,7 @@ pub const Generator = struct {
         return self;
     }
 
-    pub fn give_back(self: *Generator, source: Source) GeneratorError!void {
+    pub fn give_back(self: *Generator, source: Source) Error!void {
         if (@as(SourceKind, source) == SourceKind.Register) {
             try self.manager.give_back(source.Register);
         } else {
@@ -385,22 +378,50 @@ pub const Generator = struct {
         }
     }
 
-    pub fn push_procedure(self: *Generator, parameter_size: u32, return_size: u32) void {
-        defer {
-            self.manager.reset();
-            self.operations.clear();
-        }
+    pub fn evaluate(self: *Generator, cons: *Constant) void {
+	util.print(.Info, "Evaluate constant\n", .{});
+
+	switch (cons.*) {
+	    .Number => |_| {},
+	    .Parameter => |_| {},
+	    .Call => |_| {
+	    	util.print(.Info, "Call\n", .{});
+	    },
+	    .Binary => |binary| {
+		util.print(.Info, "Binary\n", .{});
+		self.evaluate(&binary.left);
+		self.evaluate(&binary.right);
+	    },
+	    .Unary => |_| {},
+	    .Construct => |_| {
+		util.print(.Info, "Construct\n", .{});
+	    },
+	    .FieldAcess => |field| {
+		self.evaluate(&field.constant);
+		util.print(.Info, "FieldAcess\n", .{});
+	    },
+	    .Ref => |_| {},
+	    .Scope => |scope| {
+		util.print(.Info, "Scope\n", .{});
+
+		if (scope.return_value) |*value| {
+		    self.evaluate(value);
+		}
+	    },
+	    .Procedure => |_| {},
+	    .Type => |_| {},
+	}
+    }
+
+    pub fn push_procedure(self: *Generator, return_value: *Constant) void {
+        util.print(.Info, "--------------------- Procedure start () - Offset () ---------------", .{ });
+
+        defer self.operations.clear();
+
+        self.evaluate(return_value);
 
         var startup_instructions = Vec(Operation).new(2, self.arena) catch @panic("TODO");
         defer startup_instructions.deinit(self.arena);
-
-        if (parameter_size > 0 or self.manager.stack > 0 or return_size > mem.BASE_SIZE) {
-            startup_instructions.push(Operation{ .Binary = BinaryOperation{
-                .kind = BinaryKind.Mov,
-                .source = Source{ .Register = Register.Rsp },
-                .destination = Destination{ .Register = Register.Rbp },
-            } }) catch unreachable;
-        }
 
         if (self.manager.stack > 0) {
             startup_instructions.push(Operation{ .Binary = BinaryOperation{
@@ -426,8 +447,8 @@ pub const Generator = struct {
             operation.write(&self.code);
         }
 
-        self.manager.reset();
         self.operations.clear();
+        util.print(.Info, "--------------------- Procedure end ---------------", .{});
     }
 
     pub fn push_operation(self: *Generator, operation: Operation) void {
