@@ -104,7 +104,7 @@ const CommandLineArgument = struct {
     }
 };
 
-const Time = struct {
+const DeltaTime = struct {
     kind: Kind,
     value: usize,
 
@@ -128,35 +128,35 @@ const Time = struct {
     const MILI_TO_NANO: usize = 1000_000;
     const SECOND_TO_NANO: usize = 1000_000_000;
 
-    fn from_nano(nano: usize) Time {
+    fn from_nano(nano: usize) DeltaTime {
         if (nano < MICRO_TO_NANO) {
-            return Time{
+            return DeltaTime{
                 .kind = .NanoSeconds,
                 .value = nano,
             };
         }
 
         if (nano < MILI_TO_NANO) {
-            return Time{
+            return DeltaTime{
                 .kind = .MicroSeconds,
                 .value = nano / MICRO_TO_NANO,
             };
         }
 
         if (nano < SECOND_TO_NANO) {
-            return Time{
+            return DeltaTime{
                 .kind = .MiliSeconds,
                 .value = nano / MILI_TO_NANO,
             };
         }
 
-        return Time{
+        return DeltaTime{
             .kind = .Seconds,
             .value = nano / SECOND_TO_NANO,
         };
     }
 
-    fn print(self: Time) void {
+    fn print(self: DeltaTime) void {
         util.print(.Info, "{}{}", .{ self.value, self.kind.as_string() });
     }
 };
@@ -189,8 +189,7 @@ pub fn main() !void {
 
     parser.compile(output_file.stream());
 
-    const end = Time.from_nano((try std.time.Instant.now()).since(start));
-    end.print();
+    DeltaTime.from_nano((try std.time.Instant.now()).since(start)).print();
 }
 
 test "main test" {
