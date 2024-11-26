@@ -25,7 +25,6 @@ pub const ConstantBinary = struct {
     left: Constant,
     right: Constant,
     inner: ?*const ConstantType,
-    source: ?Source,
     usage: usize,
 
     pub const Operator = enum(usize) {
@@ -70,7 +69,6 @@ pub const ConstantBinary = struct {
 pub const ConstantUnary = struct {
     operator: Operator,
     constant: Constant,
-    source: ?Source,
     usage: usize,
 
     pub const Operator = enum(usize) {
@@ -89,7 +87,6 @@ pub const ConstantUnary = struct {
 pub const ConstantCall = struct {
     procedure: *const ConstantProcedure,
     arguments: Array(Constant),
-    source: ?Source,
     usage: usize,
 };
 
@@ -141,7 +138,6 @@ pub const ConstantScope = struct {
 pub const ConstantConstruct = struct {
     inner: *const ConstantType,
     constants: Array(Constant),
-    source: ?Source,
     usage: usize,
 
     pub fn print(self: ConstantConstruct, formater: util.Formater) error{Overflow}!void {
@@ -160,7 +156,6 @@ pub const ConstantFieldAcess = struct {
     inner: *const ConstantType,
     index: usize,
     usage: usize,
-    source: ?Source,
 };
 
 const ConstantUsageModification = enum(usize) {
@@ -172,13 +167,6 @@ const ConstantUsageModification = enum(usize) {
             .Remove => number - 1,
             .Add => number + 1,
         };
-    }
-
-    pub fn print(self: ConstantUsageModification, formater: util.Formater) error{Overflow}!void {
-        switch (self) {
-            .Remove => try formater("Remove", .{}),
-            .Add => try formater("Add", .{}),
-        }
     }
 };
 
@@ -221,16 +209,6 @@ pub const ConstantProcedure = struct {
     inner: *ConstantType,
     parameters: Array(*const ConstantType),
     usage: usize,
-
-    pub fn print(self: ConstantProcedure, formater: util.Formater) error{Overflow}!void {
-        try formater("\n", .{});
-
-        for (self.parameters.offset(0) catch unreachable) |parameter| {
-            try formater("{}", .{parameter.size});
-        }
-
-        try formater("\n", .{});
-    }
 };
 
 pub const ConstantKind = enum {
@@ -384,250 +362,6 @@ pub const Constant = union(ConstantKind) {
         };
     }
 
-    pub fn set_source(self: Constant, source: ?Source) void {
-        switch (self) {
-            .Procedure, .Type => unreachable,
-            .Parameter, .Number => {},
-            .Call => |call| call.source = source,
-            .Construct => |construct| construct.source = source,
-            .Binary => |binary| binary.source = source,
-            .FieldAcess => |field| field.source = source,
-            .Scope => |scope| {
-                if (scope.return_value) |*constant| {
-                    constant.set_source(source);
-                }
-            },
-            .Unary => |unary| unary.source = source,
-            .Ref => |ref| ref.set_source(source),
-        }
-    }
-
-    pub fn get_source(self: Constant) ?Source {
-        return switch (self) {
-            .Procedure, .Type => unreachable,
-            .Parameter => |parameter| Source{ .Memory = Memory{ .register = Register.Rbp, .offset = parameter.offset } },
-            .Number => |number| Source{ .Immediate = number.value },
-            .Call => |call| call.source,
-            .Construct => |construct| construct.source,
-            .FieldAcess => |field| blk: {
-                if (field.source) |source| {
-                    break :blk source;
-                } else if (field.constant.get_source()) |source| {
-                    field.source = source;
-                    break :blk source;
-                }
-
-                break :blk null;
-            },
-            .Binary => |binary| binary.source,
-            .Scope => |scope| blk: {
-                if (scope.return_value) |constant| {
-                    break :blk constant.get_source();
-                } else {
-                    break :blk null;
-                }
-            },
-            .Unary => |unary| unary.source,
-            .Ref => |ref| ref.get_source(),
-        };
-    }
-
-    pub fn evaluate(
-        self: Constant,
-        operation: BinaryOperationKind,
-        destination: ?Destination,
-        gen: *Generator,
-        change_count: bool,
-    ) void {
-        if (change_count) {
-            self.usage_count(.Remove);
-        }
-
-        switch (self) {
-            .Procedure, .Type => unreachable,
-            .Number => |number| {
-                gen.push_operation(Operation{ .Binary = BinaryOperation{
-                    .kind = operation,
-                    .source = Source{ .Immediate = number.value },
-                    .destination = destination orelse @panic("TODO"),
-                } });
-            },
-            .Parameter => |parameter| {
-                gen.push_operation(Operation{ .Binary = BinaryOperation{
-                    .kind = operation,
-                    .source = Source{ .Memory = .{ .register = .Rbp, .offset = parameter.offset } },
-                    .destination = destination orelse @panic("TODO"),
-                } });
-            },
-            .Call => |call| {
-                const return_on_stack = call.procedure.inner.size > 4;
-
-                if (return_on_stack) {
-                    gen.push_operation(Operation{ .Binary = BinaryOperation{
-                        .kind = BinaryOperationKind.Sub,
-                        .source = Source{ .Immediate = call.procedure.inner.size },
-                        .destination = Destination{ .Register = Register.Rsp },
-                    } });
-
-                    call.source = Source{ .Memory = Memory{
-                        .register = Register.Rsp,
-                        .offset = 0,
-                    } };
-                } else {
-                    call.source = Source{ .Register = Register.Rax };
-                }
-
-                var size: u32 = 0;
-
-                for (call.arguments.offset(0) catch unreachable, 0..) |argument, i| {
-                    argument.evaluate(.Mov, Destination.Stack, gen, change_count);
-                    size += call.procedure.parameters.items[i].size;
-                }
-
-                gen.push_operation(Operation{ .Call = call.procedure.offset });
-
-                if (size > 0) {
-                    gen.push_operation(Operation{ .Binary = BinaryOperation{
-                        .kind = BinaryOperationKind.Add,
-                        .source = Source{ .Immediate = size },
-                        .destination = Destination{ .Register = Register.Rsp },
-                    } });
-                }
-
-                if (destination) |dst| {
-                    if (return_on_stack) @panic("TODO");
-
-                    if (@as(DestinationKind, dst) == .Register and dst.Register == Register.Rax) {} else {
-                        gen.push_operation(Operation{ .Binary = BinaryOperation{
-                            .kind = operation,
-                            .source = Source{ .Register = .Rax },
-                            .destination = dst,
-                        } });
-                    }
-
-                    call.source = dst.as_source();
-                }
-            },
-            .Binary => |binary| {
-                const dst = destination orelse @panic("TODO");
-
-                if (binary.source) |source| {
-                    gen.push_operation(Operation{ .Binary = BinaryOperation{
-                        .kind = operation,
-                        .source = source,
-                        .destination = dst,
-                    } });
-                } else {
-                    binary.left.evaluate(operation, dst, gen, change_count);
-                    binary.right.evaluate(binary.operator.to_gen_operation(), dst, gen, change_count);
-                }
-            },
-            .Unary => |unary| {
-                const dst = destination orelse @panic("TODO");
-
-                if (unary.source) |source| {
-                    gen.push_operation(Operation{ .Binary = BinaryOperation{
-                        .kind = operation,
-                        .source = source,
-                        .destination = dst,
-                    } });
-                } else {
-                    unary.constant.evaluate(operation, dst, gen, change_count);
-                }
-            },
-            .Scope => |scope| {
-                if (!scope.used) {
-                    for (scope.constants.offset(0) catch unreachable) |constant| {
-                        constant.evaluate(operation, null, gen, false);
-                    }
-                }
-
-                if (scope.return_value) |constant| {
-                    constant.evaluate(operation, destination orelse @panic("TODO"), gen, change_count);
-                }
-
-                scope.used = true;
-            },
-            .Construct => |construct| {
-                const dst = destination orelse @panic("TODO");
-
-                if (@as(DestinationKind, dst) != DestinationKind.Memory) @panic("TODO");
-
-                var size: u32 = 0;
-
-                for (0..construct.constants.len) |i| {
-                    const constant = construct.constants.items[i];
-                    const typ = constant.get_type() orelse @panic("TODO");
-
-                    constant.evaluate(
-                        BinaryOperationKind.Mov,
-                        Destination{
-                            .Memory = Memory{
-                                .register = dst.Memory.register,
-                                .offset = dst.Memory.offset + size,
-                            },
-                        },
-                        gen,
-                        change_count,
-                    );
-
-                    size += typ.size;
-                }
-
-                construct.source = dst.as_source();
-            },
-            .FieldAcess => |field| {
-                var constant_source_opt: ?Source = null;
-
-                if (field.source) |_| {} else if (field.constant.get_source()) |s| {
-                    constant_source_opt = s;
-                } else {
-                    field.constant.evaluate(BinaryOperationKind.Mov, null, gen, false);
-                    constant_source_opt = field.constant.get_source();
-                }
-
-                const constant_source = constant_source_opt orelse @panic("TODO");
-
-                if (@as(SourceKind, constant_source) != SourceKind.Memory) @panic("TODO");
-                const typ = field.constant.get_type() orelse @panic("TODO");
-                const offset = typ.offset(field.index);
-
-                const source = Source{ .Memory = Memory{
-                    .register = constant_source.Memory.register,
-                    .offset = constant_source.Memory.offset + offset,
-                } };
-
-                field.source = source;
-
-                if (destination) |dst| {
-                    gen.push_operation(Operation{ .Binary = BinaryOperation{
-                        .kind = operation,
-                        .source = source,
-                        .destination = dst,
-                    } });
-                } else return;
-
-                field.constant.unuse(gen);
-            },
-            .Ref => |constant| {
-                const dst = destination orelse @panic("TODO");
-
-                if (constant.get_source()) |_| {
-                    constant.evaluate(operation, dst, gen, change_count);
-                    constant.unuse(gen);
-                } else if (constant.get_usage() > 1) {
-                    const register = gen.manager.get() catch @panic("TODO");
-
-                    constant.evaluate(BinaryOperationKind.Mov, Destination{ .Register = register }, gen, change_count);
-                    constant.set_source(Source{ .Register = register });
-                    constant.evaluate(operation, dst, gen, false);
-                } else {
-                    constant.evaluate(operation, dst, gen, change_count);
-                }
-            },
-        }
-    }
-
     fn unuse(self: Constant, gen: *Generator) void {
         switch (self) {
             .Parameter, .Number => {},
@@ -730,22 +464,6 @@ pub const Constant = union(ConstantKind) {
 
                 scope.constants.deinit(arena);
             },
-        }
-    }
-
-    pub fn print(self: Constant, formater: util.Formater) error{Overflow}!void {
-        switch (self) {
-            .Number => |n| try formater("Constant::Number({})", .{n.value}),
-            .Parameter => |p| try formater("Constant::Parameter({})", .{p.inner.size}),
-            .Call => |c| try formater("Constant::Call({})", .{c.procedure.*}),
-            .Binary => |b| try formater("Constant::Binary({} {} {})", .{ b.left, b.operator, b.right }),
-            .Unary => |u| try formater("Constant::Unary({} {})", .{ u.operator, u.constant }),
-            .Construct => |c| try formater("Constant::Construct({})", .{c.*}),
-            .FieldAcess => |f| try formater("Constant::FieldAccess({})", .{f.inner.size}),
-            .Ref => |f| try formater("Constant::Ref({})", .{f.*}),
-            .Scope => |s| try formater("Constant::Scope(null)", .{s.*}),
-            .Procedure => |p| try formater("Constant::Procedure({})", .{p.offset}),
-            .Type => |t| try formater("Constant::Type({})", .{t.size}),
         }
     }
 };
