@@ -319,7 +319,6 @@ pub const Generator = struct {
 	    const Variant = union(Kind) {
 		Register: Register,
 		Memory: Memory,
-
 	    };
 	};
 
@@ -341,6 +340,42 @@ pub const Generator = struct {
                 .free = free,
                 .stack = 0,
             };
+        }
+
+        fn increase(self: *Manager, size: usize) void {
+            self.stack += size;
+        }
+
+        fn get_resource(self: *Manager, cons: *const Constant) Resource {
+            const inner = cons.get_type().?;
+
+            const resource = blk: {
+                if (inner.size > 4) {
+                    self.increase(inner.size);
+
+                    break :blk Resource {
+                        .ptr = cons,
+                        .variant = Resource.Variant {
+                            .Memory = Memory {
+                                .register = Register.Rsp,
+                                .offset = self.stack,
+                            },
+                        },
+                    };
+                } else {
+                    const register = self.free.pop() catch @panic("TODO");
+
+                    break :blk Resource {
+                        .ptr = cons,
+                        .variant = Resource.Variant {
+                            .Register = register,
+                        },
+                    };
+                }
+            };
+
+            self.resources.push(resource) catch @panic("TODO");
+            return resource;
         }
 
         fn deinit(self: *Manager, arena: *Arena) void {
@@ -378,38 +413,42 @@ pub const Generator = struct {
         }
     }
 
-    pub fn evaluate(self: *Generator, cons: *Constant) void {
-	util.print(.Info, "Evaluate constant\n", .{});
+    pub fn evaluate(self: *Generator, cons: *Constant, destination: ?Destination) void {
+        if (destination) |_| {
+        }
 
 	switch (cons.*) {
 	    .Number => |_| {},
 	    .Parameter => |_| {},
-	    .Call => |_| {
-	    	util.print(.Info, "Call\n", .{});
-	    },
+	    .Call => |_| {},
 	    .Binary => |binary| {
-		util.print(.Info, "Binary\n", .{});
-		self.evaluate(&binary.left);
-		self.evaluate(&binary.right);
+		self.evaluate(&binary.left, null);
+		self.evaluate(&binary.right, null);
 	    },
-	    .Unary => |_| {},
+	    .Unary => |unary| {
+                self.evaluate(&unary.constant, null);
+            },
 	    .Construct => |_| {
-		util.print(.Info, "Construct\n", .{});
 	    },
 	    .FieldAcess => |field| {
-		self.evaluate(&field.constant);
-		util.print(.Info, "FieldAcess\n", .{});
+		self.evaluate(&field.constant, null);
 	    },
-	    .Ref => |_| {},
+	    .Ref => |ref| {
+                const resource = self.manager.get_resource(cons);
+                _ = resource;
+
+                self.evaluate(ref, null);
+            },
 	    .Scope => |scope| {
-		util.print(.Info, "Scope\n", .{});
+                for (0..scope.constants.len) |i| {
+                    self.evaluate(&scope.constants.items[i], null);
+                }
 
 		if (scope.return_value) |*value| {
-		    self.evaluate(value);
+		    self.evaluate(value, null);
 		}
 	    },
-	    .Procedure => |_| {},
-	    .Type => |_| {},
+	    .Procedure, .Type => @panic("Should be unreachable"),
 	}
     }
 
@@ -418,7 +457,7 @@ pub const Generator = struct {
 
         defer self.operations.clear();
 
-        self.evaluate(return_value);
+        self.evaluate(return_value, null);
 
         var startup_instructions = Vec(Operation).new(2, self.arena) catch @panic("TODO");
         defer startup_instructions.deinit(self.arena);
@@ -494,7 +533,8 @@ pub const Generator = struct {
         self.code.extend(mem.as_bytes(ProgramHeader, &program_header)) catch @panic("TODO");
 
         self.code.set_len(code_len) catch unreachable;
-        stream.write(self.code) catch @panic("TODO");
+        _ = stream;
+        // stream.write(self.code) catch @panic("TODO");
     }
 
     pub fn deinit(self: *Generator) void {

@@ -218,10 +218,17 @@ pub const TypeChecker = struct {
     fn get_property(self: *TypeChecker, cons: Constant, name: []const u8) Constant {
         switch (cons) {
             .Ref => |ref| {
-                return self.get_property(ref.*, name);
+                const inner = ref.get_type() orelse @panic("Show that this type does not exist at this time");
+                const index = inner.field_index(name) catch @panic("Show that property does not exist");
+                return Constant{ .FieldAcess = self.arena.create(ConstantFieldAcess, ConstantFieldAcess{
+                    .index = index,
+                    .constant = cons,
+                    .usage = 0,
+                    .inner = inner.fields.items[index].inner,
+                }) catch @panic("TODO") };
             },
             .Construct => |construct| {
-                const index = construct.inner.field_index(name) catch @panic("Show that property do not exist");
+                const index = construct.inner.field_index(name) catch @panic("Show that property does not exist");
                 return Constant{ .Ref = &construct.constants.items[index] };
             },
             .FieldAcess => |field| {
@@ -229,7 +236,7 @@ pub const TypeChecker = struct {
 
                 return Constant{ .FieldAcess = self.arena.create(ConstantFieldAcess, ConstantFieldAcess{
                     .index = index,
-                    .constant = Constant{ .FieldAcess = field },
+                    .constant = cons,
                     .usage = 0,
                     .inner = field.inner.fields.items[index].inner,
                 }) catch @panic("TODO") };
@@ -239,7 +246,7 @@ pub const TypeChecker = struct {
 
                 return Constant{ .FieldAcess = self.arena.create(ConstantFieldAcess, ConstantFieldAcess{
                     .index = index,
-                    .constant = Constant{ .Call = call },
+                    .constant = cons,
                     .usage = 0,
                     .inner = call.procedure.inner.fields.items[index].inner,
                 }) catch @panic("TODO") };
@@ -337,7 +344,7 @@ pub const TypeChecker = struct {
         var cons = self.constants.pop() catch @panic("TODO");
         if (!cons.set_type(inner)) @panic("Should not happen");
 
-        cons.usage_count(.Add);
+        cons.add_usage();
 
         self.generator.push_procedure(&cons);
 

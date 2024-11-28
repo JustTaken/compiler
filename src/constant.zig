@@ -51,18 +51,6 @@ pub const ConstantBinary = struct {
                 else => @panic("TODO"),
             };
         }
-
-        pub fn print(self: Operator, formater: util.Formater) error{Overflow}!void {
-            switch (self) {
-                Operator.Add => try formater("Operator::Add", .{}),
-                Operator.Sub => try formater("Operator::Sub", .{}),
-                Operator.Mul => try formater("Operator::Mul", .{}),
-                Operator.Div => try formater("Operator::Div", .{}),
-                Operator.Gt => try formater("Operator::Gt", .{}),
-                Operator.Lt => try formater("Operator::Lt", .{}),
-                Operator.Eq => try formater("Operator::Eq", .{}),
-            }
-        }
     };
 };
 
@@ -74,13 +62,6 @@ pub const ConstantUnary = struct {
     pub const Operator = enum(usize) {
         Bang,
         Minus,
-
-        pub fn print(self: Operator, formater: util.Formater) error{Overflow}!void {
-            switch (self) {
-                Operator.Bang => try formater("Operator::Bang", .{}),
-                Operator.Minus => try formater("Operator::Minus", .{}),
-            }
-        }
     };
 };
 
@@ -123,32 +104,12 @@ pub const ConstantScope = struct {
             return null;
         }
     }
-
-    pub fn print(self: ConstantConstruct, formater: util.Formater) error{Overflow}!void {
-        try formater("\n", .{});
-
-        if (self.return_value) |constant| {
-            try formater("{}", .{constant});
-        }
-
-        try formater("\n", .{});
-    }
 };
 
 pub const ConstantConstruct = struct {
     inner: *const ConstantType,
     constants: Array(Constant),
     usage: usize,
-
-    pub fn print(self: ConstantConstruct, formater: util.Formater) error{Overflow}!void {
-        try formater("\n", .{});
-
-        for (self.constants.offset(0) catch unreachable) |constant| {
-            try formater("{}\n", .{constant});
-        }
-
-        try formater("\n", .{});
-    }
 };
 
 pub const ConstantFieldAcess = struct {
@@ -162,10 +123,10 @@ const ConstantUsageModification = enum(usize) {
     Remove,
     Add,
 
-    pub fn apply(self: ConstantUsageModification, number: usize) usize {
+    pub fn apply(self: ConstantUsageModification, number: *usize) void {
         return switch (self) {
-            .Remove => number - 1,
-            .Add => number + 1,
+            .Remove => number.* -= 1,
+            .Add => number.* += 1,
         };
     }
 };
@@ -282,67 +243,52 @@ pub const Constant = union(ConstantKind) {
         };
     }
 
-    pub fn usage_count(self: Constant, mod: ConstantUsageModification) void {
+    pub fn add_usage(self: Constant) void {
+        const add = ConstantUsageModification.Add;
+
         switch (self) {
-            .Number => |number| number.usage = mod.apply(number.usage),
-            .Parameter => |parameter| parameter.usage = mod.apply(parameter.usage),
-            .Procedure => |procedure| procedure.usage = mod.apply(procedure.usage),
-            .Type => |typ| typ.usage = mod.apply(typ.usage),
+            .Number => |number| add.apply(&number.usage),
+            .Parameter => |parameter| add.apply(&parameter.usage),
+            .Procedure => |procedure| add.apply(&procedure.usage),
+            .Type => |typ| add.apply(&typ.usage),
             .FieldAcess => |field| {
-                field.usage = mod.apply(field.usage);
-                field.constant.usage_count(mod);
+                add.apply(&field.usage);
+                field.constant.add_usage();
             },
             .Unary => |unary| {
-                unary.usage = mod.apply(unary.usage);
-
-                if (mod == .Add) {
-                    unary.constant.usage_count(mod);
-                }
+                add.apply(&unary.usage);
             },
             .Binary => |binary| {
-                binary.usage = mod.apply(binary.usage);
-
-                if (mod == .Add) {
-                    binary.left.usage_count(mod);
-                    binary.right.usage_count(mod);
-                }
+                add.apply(&binary.usage);
+                binary.left.add_usage();
+                binary.right.add_usage();
             },
             .Call => |call| {
-                call.usage = mod.apply(call.usage);
+                add.apply(&call.usage);
 
-                if (mod == .Add) {
-                    for (call.arguments.offset(0) catch unreachable) |*arg| {
-                        arg.usage_count(mod);
-                    }
+                for (call.arguments.offset(0) catch unreachable) |*arg| {
+                    arg.add_usage();
                 }
             },
             .Scope => |scope| {
-                scope.usage = mod.apply(scope.usage);
+                add.apply(&scope.usage);
 
-                if (mod == .Add) {
-                    if (scope.return_value) |constant| {
-                        constant.usage_count(mod);
-                    }
+                if (scope.return_value) |constant| {
+                    constant.add_usage();
+                }
 
-                    for (scope.constants.offset(0) catch unreachable) |constant| {
-                        constant.usage_count(mod);
-                    }
+                for (scope.constants.offset(0) catch unreachable) |constant| {
+                    constant.add_usage();
                 }
             },
             .Construct => |construct| {
-                construct.usage = mod.apply(construct.usage);
+                add.apply(&construct.usage);
 
-                if (mod == .Add) {
-                    for (construct.constants.offset(0) catch unreachable) |constant| {
-                        constant.usage_count(mod);
-                    }
+                for (construct.constants.offset(0) catch unreachable) |constant| {
+                    constant.add_usage();
                 }
             },
-            .Ref => |constant| {
-                if (mod == .Add) {
-                    constant.usage_count(mod);
-                }
-            },
+            .Ref => |constant| constant.add_usage(),
         }
     }
 
