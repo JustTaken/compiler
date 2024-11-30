@@ -220,8 +220,10 @@ pub const TypeChecker = struct {
             .Ref => |ref| {
                 const inner = ref.get_type() orelse @panic("Show that this type does not exist at this time");
                 const index = inner.field_index(name) catch @panic("Show that property does not exist");
+                const offset = inner.offset(index);
+
                 return Constant{ .FieldAcess = self.arena.create(ConstantFieldAcess, ConstantFieldAcess{
-                    .index = index,
+                    .offset = offset,
                     .constant = cons,
                     .usage = 0,
                     .inner = inner.fields.items[index].inner,
@@ -233,9 +235,10 @@ pub const TypeChecker = struct {
             },
             .FieldAcess => |field| {
                 const index = field.inner.field_index(name) catch @panic("TODO: Show that property do not exist");
+                const offset = field.inner.offset(index);
 
                 return Constant{ .FieldAcess = self.arena.create(ConstantFieldAcess, ConstantFieldAcess{
-                    .index = index,
+                    .offset = offset,
                     .constant = cons,
                     .usage = 0,
                     .inner = field.inner.fields.items[index].inner,
@@ -243,9 +246,10 @@ pub const TypeChecker = struct {
             },
             .Call => |call| {
                 const index = call.procedure.inner.field_index(name) catch @panic("TODO");
+                const offset = call.procedure.inner.offset(index);
 
                 return Constant{ .FieldAcess = self.arena.create(ConstantFieldAcess, ConstantFieldAcess{
-                    .index = index,
+                    .offset = offset,
                     .constant = cons,
                     .usage = 0,
                     .inner = call.procedure.inner.fields.items[index].inner,

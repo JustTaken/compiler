@@ -14,6 +14,8 @@ const ElfHeader = elf.Header;
 
 const Constant = constant.Constant;
 
+const BASE_SIZE: u32 = 4;
+
 pub const Register = enum(u8) {
     Rax,
     Rcx,
@@ -139,12 +141,29 @@ pub const BinaryOperation = struct {
             .Register => |rd| switch (self.source) {
                 .Stack => buffer.push(0x58 + rd.value()) catch @panic("TODO"),
                 .Register => |rs| buffer.extend(&.{ 0x48, 0x89, 0b11000000 + (rs.value() << 3) + rd.value() }) catch @panic("TODO"),
-                .Memory => |m| buffer.extend(&.{ 0x8B, 0b01000000 + (rd.value() << 3) + m.register.value(), to_bytes(m.offset)[0] }) catch @panic("TODO"),
+                .Memory => |m| {
+                    buffer.extend(&.{
+                        0x8B,
+                        0b01000000 + (rd.value() << 3) + m.register.value(),
+                        to_bytes(m.offset)[0],
+                    }) catch @panic("TODO");
+                },
                 .Immediate => |i| buffer.mult_extend(&.{ &.{0xB8 + rd.value()}, to_bytes(i)[0 .. mem.BASE_SIZE >> 1] }) catch @panic("TODO"),
             },
             .Memory => |m| switch (self.source) {
-                .Register => |r| buffer.extend(&.{ 0x89, 0b01000000 + (r.value() << 3) + m.register.value(), to_bytes(m.offset)[0] }) catch @panic("TODO"),
-                .Immediate => |i| buffer.mult_extend(&.{ &.{ 0xC7, 0b01000000 + m.register.value(), to_bytes(m.offset)[0] }, to_bytes(i)[0 .. mem.BASE_SIZE >> 1] }) catch @panic("TODO"),
+                .Register => |r| {
+                    buffer.extend(&.{
+                        0x89,
+                        0b01000000 + (r.value() << 3) + m.register.value(),
+                        to_bytes(m.offset)[0],
+                    }) catch @panic("TODO");
+                },
+                .Immediate => |i| {
+                    buffer.mult_extend(&.{
+                        &.{ 0xC7, 0b01000000 + m.register.value(), to_bytes(m.offset)[0] },
+                        to_bytes(i)[0 .. mem.BASE_SIZE >> 1],
+                    }) catch @panic("TODO");
+                },
                 .Stack => @panic("TODO"),
                 .Memory => @panic("TODO"),
             },
@@ -156,8 +175,15 @@ pub const BinaryOperation = struct {
             .Register => |rd| switch (self.source) {
                 .Register => |rs| buffer.extend(&.{ 0x01, 0b11000000 + (rs.value() << 3) + rd.value() }) catch @panic("TODO"),
                 .Immediate => |i| buffer.extend(&.{ 0x83, 0b11000000 + rd.value(), to_bytes(i)[0] }) catch @panic("TODO"),
-                .Memory => |m| buffer.extend(&.{ 0x03, 0b01000000 + rd.value(), 0b00100000 + m.register.value(), to_bytes(m.offset)[0] }) catch @panic("TODO"),
                 .Stack => @panic("TODO"),
+                .Memory => |m| {
+                    buffer.extend(&.{
+                        0x03,
+                        0b01000000 + rd.value(),
+                        0b00100000 + m.register.value(),
+                        to_bytes(m.offset)[0],
+                    }) catch @panic("TODO");
+                },
             },
             .Memory => |m| switch (self.source) {
                 .Register => |r| buffer.extend(&.{ 0x01, 0b01000000 + (r.value() << 3) + m.register.value() }) catch @panic("TODO"),
@@ -191,9 +217,17 @@ pub const BinaryOperation = struct {
         switch (self.destination) {
             .Register => |rd| switch (self.source) {
                 .Immediate => |i| buffer.extend(&.{ 0x6B, 0b01101000 + rd.value(), to_bytes(i)[0] }) catch @panic("TODO"),
-                .Memory => |m| buffer.extend(&.{ 0x0F, 0xAF, 0b01000000 + rd.value(), 0b00100000 + m.register.value(), to_bytes(m.offset)[0] }) catch @panic("TODO"),
                 .Register => @panic("TODO"),
                 .Stack => @panic("TODO"),
+                .Memory => |m| {
+                    buffer.extend(&.{
+                        0x0F,
+                        0xAF,
+                        0b01000000 + rd.value(),
+                        0b00100000 + m.register.value(),
+                        to_bytes(m.offset)[0],
+                    }) catch @panic("TODO");
+                },
             },
             .Memory => |_| switch (self.source) {
                 .Register => @panic("TODO"),
@@ -304,23 +338,32 @@ pub const Generator = struct {
 
     const Manager = struct {
         free: Vec(Register),
-	resources: Vec(Resource),
+        resources: Vec(Resource),
         stack: usize,
 
-	pub const Resource = struct {
-	    variant: Variant,
-	    ptr: *const Constant,
+        pub const Resource = struct {
+            variant: Variant,
+            ptr: *const Constant,
 
-	    const Kind = enum {
-		Register,
-		Memory,
-	    };
+            const Kind = enum {
+                Register,
+                Memory,
+            };
 
-	    const Variant = union(Kind) {
-		Register: Register,
-		Memory: Memory,
-	    };
-	};
+            const Variant = union(Kind) {
+                Register: Register,
+                Memory: Memory,
+            };
+
+            fn as_destination(self: Resource) Destination {
+                return switch (self.variant) {
+                    .Register => |register| Destination{ .Register = register },
+                    .Memory => |memory| Destination{
+                        .Memory = memory,
+                    },
+                };
+            }
+        };
 
         fn new(arena: *Arena) error{OutOfMemory}!Manager {
             const usable_registers = &.{
@@ -346,28 +389,30 @@ pub const Generator = struct {
             self.stack += size;
         }
 
-        fn get_resource(self: *Manager, cons: *const Constant) Resource {
+        fn get(self: *Manager, cons: *const Constant) Destination {
             const inner = cons.get_type().?;
 
             const resource = blk: {
-                if (inner.size > 4) {
+                if (inner.size > BASE_SIZE) {
+                    const offset = self.stack;
+
                     self.increase(inner.size);
 
-                    break :blk Resource {
+                    break :blk Resource{
                         .ptr = cons,
-                        .variant = Resource.Variant {
-                            .Memory = Memory {
+                        .variant = Resource.Variant{
+                            .Memory = Memory{
                                 .register = Register.Rsp,
-                                .offset = self.stack,
+                                .offset = offset,
                             },
                         },
                     };
                 } else {
                     const register = self.free.pop() catch @panic("TODO");
 
-                    break :blk Resource {
+                    break :blk Resource{
                         .ptr = cons,
-                        .variant = Resource.Variant {
+                        .variant = Resource.Variant{
                             .Register = register,
                         },
                     };
@@ -375,7 +420,28 @@ pub const Generator = struct {
             };
 
             self.resources.push(resource) catch @panic("TODO");
-            return resource;
+
+            return resource.as_destination();
+        }
+
+        fn get_registry(self: Manager, cons: *const Constant) ?Destination {
+            for (self.resources.offset(0) catch unreachable) |resource| {
+                if (resource.ptr == cons) return resource.as_destination();
+            }
+
+            return null;
+        }
+
+        fn is_used(self: Manager, register: Register) bool {
+            for (self.free.offset(0) catch unreachable) |r| {
+                if (r == register) return false;
+            }
+
+            return true;
+        }
+
+        fn clear(self: *Manager) void {
+            self.resources.clear();
         }
 
         fn deinit(self: *Manager, arena: *Arena) void {
@@ -413,68 +479,233 @@ pub const Generator = struct {
         }
     }
 
-    pub fn evaluate(self: *Generator, cons: *Constant, destination: ?Destination) void {
-        if (destination) |_| {
-        }
+    pub fn evaluate(self: *Generator, cons: *Constant, kind: BinaryKind, destination: ?Destination) Source {
+        switch (cons.*) {
+            .Number => |n| {
+                util.print(.Info, ".Number", .{});
+                const source = Source{
+                    .Immediate = n.value,
+                };
 
-	switch (cons.*) {
-	    .Number => |_| {},
-	    .Parameter => |_| {},
-	    .Call => |_| {},
-	    .Binary => |binary| {
-		self.evaluate(&binary.left, null);
-		self.evaluate(&binary.right, null);
-	    },
-	    .Unary => |unary| {
-                self.evaluate(&unary.constant, null);
-            },
-	    .Construct => |_| {
-	    },
-	    .FieldAcess => |field| {
-		self.evaluate(&field.constant, null);
-	    },
-	    .Ref => |ref| {
-                const resource = self.manager.get_resource(cons);
-                _ = resource;
+                if (destination) |dst| {
+                    self.operations.push(Operation{
+                        .Binary = BinaryOperation{
+                            .kind = kind,
+                            .source = source,
+                            .destination = dst,
+                        },
+                    }) catch @panic("TODO");
 
-                self.evaluate(ref, null);
+                    return dst.as_source();
+                } else {
+                    return source;
+                }
             },
-	    .Scope => |scope| {
-                for (0..scope.constants.len) |i| {
-                    self.evaluate(&scope.constants.items[i], null);
+            .Binary => |binary| {
+                util.print(.Info, ".Binary", .{});
+                const dst = destination orelse @panic("TODO");
+
+                _ = self.evaluate(&binary.right, .Mov, dst);
+                _ = self.evaluate(&binary.left, binary.operator.to_gen_operation(), dst);
+
+                return dst.as_source();
+            },
+            .Unary => |unary| {
+                util.print(.Info, ".Unary", .{});
+                _ = self.evaluate(&unary.constant, .Mov, null);
+            },
+            .Parameter => |_| @panic("TODO"),
+            .Call => |call| {
+                util.print(.Info, ".Call", .{});
+                const rax_used = self.manager.is_used(Register.Rax);
+
+                if (rax_used) {
+                    self.operations.push(Operation{
+                        .Binary = BinaryOperation{
+                            .kind = BinaryKind.Mov,
+                            .source = Source{
+                                .Register = Register.Rax,
+                            },
+                            .destination = Destination.Stack,
+                        },
+                    }) catch @panic("TODO");
                 }
 
-		if (scope.return_value) |*value| {
-		    self.evaluate(value, null);
-		}
-	    },
-	    .Procedure, .Type => @panic("Should be unreachable"),
-	}
+                if (call.procedure.inner.size > BASE_SIZE) {
+                    self.operations.extend(&.{
+                        Operation{
+                            .Binary = BinaryOperation{
+                                .kind = BinaryKind.Sub,
+                                .source = Source{
+                                    .Immediate = call.procedure.inner.size,
+                                },
+                                .destination = Destination{
+                                    .Register = Register.Rsp,
+                                },
+                            },
+                        },
+                        Operation{
+                            .Binary = BinaryOperation{
+                                .kind = BinaryKind.Mov,
+                                .source = Source{
+                                    .Register = Register.Rsp,
+                                },
+                                .destination = Destination{
+                                    .Register = Register.Rax,
+                                },
+                            },
+                        },
+                    }) catch @panic("TODO");
+                }
+
+                self.operations.push(Operation{
+                    .Call = call.procedure.offset,
+                }) catch @panic("TODO");
+
+                if (rax_used) {
+                    self.operations.push(Operation{ .Binary = BinaryOperation{
+                        .kind = BinaryKind.Mov,
+                        .source = Source.Stack,
+                        .destination = Destination{ .Register = Register.Rax },
+                    } }) catch @panic("TODO");
+                }
+
+                const src = if (destination) |d| d.as_source() else null;
+
+                return src orelse blk: {
+                    if (call.procedure.inner.size > BASE_SIZE) {
+                        break :blk Source{
+                            .Memory = Memory{
+                                .register = Register.Rsp,
+                                .offset = 0,
+                            },
+                        };
+                    } else break :blk Source{
+                        .Register = Register.Rax,
+                    };
+                };
+            },
+            .Construct => |construct| {
+                util.print(.Info, ".Construct", .{});
+                var offset: usize = 0;
+                const dest = destination orelse @panic("TODO");
+                const dst = blk: {
+                    if (@as(DestinationKind, dest) == .Register) {
+                        break :blk Destination{
+                            .Memory = Memory{
+                                .register = dest.Register,
+                                .offset = 0,
+                            },
+                        };
+                    } else {
+                        break :blk dest;
+                    }
+                };
+
+                for (0..construct.constants.len) |i| {
+                    self.operations.push(Operation{
+                        .Binary = BinaryOperation{
+                            .kind = BinaryKind.Mov,
+                            .source = self.evaluate(&construct.constants.items[i], .Mov, null),
+                            .destination = Destination{
+                                .Memory = Memory{
+                                    .register = dst.Memory.register,
+                                    .offset = dst.Memory.offset + offset,
+                                },
+                            },
+                        },
+                    }) catch @panic("TODO");
+
+                    offset += construct.constants.items[i].get_type().?.size;
+                }
+
+                return dest.as_source();
+            },
+            .FieldAcess => |field| {
+                util.print(.Info, ".FieldAcess", .{});
+                const constant_source = self.evaluate(&field.constant, .Mov, null);
+                const register = constant_source.Memory.register;
+                const offset = constant_source.Memory.offset;
+
+                if (destination) |dst| {
+                    self.operations.push(Operation{
+                        .Binary = BinaryOperation{
+                            .kind = kind,
+                            .source = Source{
+                                .Memory = Memory{
+                                    .register = register,
+                                    .offset = offset + field.offset,
+                                },
+                            },
+                            .destination = dst,
+                        },
+                    }) catch @panic("TODO");
+
+                    return dst.as_source();
+                }
+
+                return Source{ .Memory = Memory{
+                    .register = register,
+                    .offset = field.offset,
+                } };
+            },
+            .Ref => |ref| {
+                util.print(.Info, ".Ref", .{});
+
+                const dst = blk: {
+                    if (self.manager.get_registry(ref)) |dst| {
+                        if (destination) |d| {
+                            self.operations.push(Operation{
+                                .Binary = BinaryOperation{
+                                    .kind = kind,
+                                    .source = dst.as_source(),
+                                    .destination = d,
+                                },
+                            }) catch @panic("TODO");
+
+                            break :blk d;
+                        } else {
+                            break :blk dst;
+                        }
+                    } else {
+                        if (destination) |dst| {
+                            _ = self.evaluate(ref, kind, dst);
+                            break :blk dst;
+                        } else {
+                            const dst = self.manager.get(ref);
+                            _ = self.evaluate(ref, kind, dst);
+
+                            break :blk dst;
+                        }
+                    }
+                };
+                return dst.as_source();
+            },
+            .Scope => |scope| {
+                util.print(.Info, ".Scope", .{});
+                for (0..scope.constants.len) |i| {
+                    _ = self.evaluate(&scope.constants.items[i], .Mov, null);
+                }
+
+                if (scope.return_value) |*value| {
+                    return self.evaluate(value, .Mov, destination);
+                }
+            },
+            .Procedure, .Type => @panic("Should be unreachable"),
+        }
+
+        @panic("TODO");
     }
 
     pub fn push_procedure(self: *Generator, return_value: *Constant) void {
-        util.print(.Info, "--------------------- Procedure start () - Offset () ---------------", .{ });
+        util.print(.Info, "--------------------- Procedure start () - Offset () ---------------", .{});
 
         defer self.operations.clear();
 
-        self.evaluate(return_value, null);
+        _ = self.evaluate(return_value, .Mov, Destination{ .Register = Register.Rax });
 
         var startup_instructions = Vec(Operation).new(2, self.arena) catch @panic("TODO");
         defer startup_instructions.deinit(self.arena);
-
-        if (self.manager.stack > 0) {
-            startup_instructions.push(Operation{ .Binary = BinaryOperation{
-                .kind = BinaryKind.Sub,
-                .source = Source{ .Immediate = self.manager.stack },
-                .destination = Destination{ .Register = Register.Rsp },
-            } }) catch unreachable;
-
-            self.operations.push(Operation{ .Binary = BinaryOperation{
-                .kind = BinaryKind.Mov,
-                .source = Source{ .Register = Register.Rbp },
-                .destination = Destination{ .Register = Register.Rsp },
-            } }) catch @panic("TODO");
-        }
 
         self.operations.push(Operation.Ret) catch @panic("TODO");
 
@@ -487,11 +718,8 @@ pub const Generator = struct {
         }
 
         self.operations.clear();
+        self.manager.clear();
         util.print(.Info, "--------------------- Procedure end ---------------", .{});
-    }
-
-    pub fn push_operation(self: *Generator, operation: Operation) void {
-        self.operations.push(operation) catch @panic("TODO");
     }
 
     pub fn generate(self: *Generator, stream: Stream, main_procedure_offset: usize) void {
@@ -533,8 +761,10 @@ pub const Generator = struct {
         self.code.extend(mem.as_bytes(ProgramHeader, &program_header)) catch @panic("TODO");
 
         self.code.set_len(code_len) catch unreachable;
-        _ = stream;
-        // stream.write(self.code) catch @panic("TODO");
+
+        if (false) {
+            stream.write(self.code) catch @panic("TODO");
+        }
     }
 
     pub fn deinit(self: *Generator) void {

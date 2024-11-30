@@ -115,7 +115,7 @@ pub const ConstantConstruct = struct {
 pub const ConstantFieldAcess = struct {
     constant: Constant,
     inner: *const ConstantType,
-    index: usize,
+    offset: usize,
     usage: usize,
 };
 
