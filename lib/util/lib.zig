@@ -37,7 +37,8 @@ pub const Logger = struct {
         .capacity = 0,
     };
 
-    var backup_array: [1024]u8 = undefined;
+    const BACKUP_BUFFER_LEN: usize = 1024;
+    var backup_array: [BACKUP_BUFFER_LEN]u8 = undefined;
     var backup_buffer = collections.string_from_buffer(&backup_array);
 
     var buffer: String = undefined;
@@ -104,24 +105,24 @@ pub const Logger = struct {
     }
 
     pub fn printf(mode: Level, comptime fmt: []const u8, args: anytype) void {
-        if (@intFromEnum(mode) <= @intFromEnum(level)) {
-            buffer = if (normal_buffer.capacity == 0) backup_buffer else normal_buffer;
+        if (@intFromEnum(mode) > @intFromEnum(level)) return;
 
-            if (format(fmt, args)) {
-                buffer.push('\n') catch overflow();
-            } else |_| {
-                overflow();
-            }
+        buffer = if (normal_buffer.capacity == 0) backup_buffer else normal_buffer;
 
-            const stderr = std.io.getStdErr().writer();
-            stderr.writeAll(buffer.offset(0) catch unreachable) catch @panic("TODO");
-
-            buffer.clear();
+        if (format(fmt, args)) {
+            buffer.push('\n') catch overflow();
+        } else |_| {
+            overflow();
         }
+
+        const stderr = std.io.getStdErr().writer();
+        stderr.writeAll(buffer.offset(0) catch unreachable) catch @panic("TODO: Failed to write to 'stderr', bypass that");
+
+        buffer.clear();
     }
 
     fn overflow() void {
-        if (buffer.capacity < 1024) @panic("TODO");
+        assert(buffer.capacity < 1024);
 
         const message = "BUFFER OVERFLOW!! START OF MESSAGE: {";
         const overflow_len_preview: usize = 50;
@@ -149,7 +150,7 @@ pub const Logger = struct {
             k += 1;
         }
 
-        var num: u32 = if (neg) @intCast(-i) else @intCast(i);
+        var num: usize = if (neg) @intCast(-i) else @intCast(i);
 
         while (num > 0) {
             const rem: u8 = @intCast(num % 10);
@@ -170,7 +171,166 @@ pub const Logger = struct {
     }
 };
 
+pub const CommandLineArgument = struct {
+    log: Logger.Level,
+    input_path: ?[]const u8,
+    output_path: ?[]const u8,
+
+    const ArgumentKind = enum {
+        Path,
+        Command,
+    };
+
+    const Command = enum {
+        Output,
+        Debug,
+        Info,
+    };
+
+    const Error = error{
+        Argument,
+        Command,
+        DebugFlagCombination,
+        MoreThanOneInputPath,
+        MoreThanOneOutputPath,
+    };
+
+    fn check_argument(arg: []const u8) error{Argument}!ArgumentKind {
+        if (arg.len == 0) return error.Argument;
+        if (arg[0] == '-') return ArgumentKind.Command;
+
+        if (is_alpha(arg[0])) {
+            return ArgumentKind.Path;
+        } else {
+            return error.Argument;
+        }
+    }
+
+    fn check_command(arg: []const u8) error{Command}!Command {
+        if (arg.len == 1) {
+            return error.Command;
+        }
+
+        if (mem.equal(u8, arg[1..], "o")) {
+            return Command.Output;
+        } else if (mem.equal(u8, arg[1..], "debug")) {
+            return Command.Debug;
+        } else if (mem.equal(u8, arg[1..], "info")) {
+            return Command.Info;
+        } else {
+            return error.Command;
+        }
+    }
+
+    pub fn new() Error!CommandLineArgument {
+        var input_path: ?[]const u8 = null;
+        var output_path: ?[]const u8 = null;
+        var log: ?Logger.Level = null;
+
+        var i: u32 = 1;
+        while (i < std.os.argv.len) {
+            const arg = convert(std.os.argv[i]);
+
+            switch (try check_argument(arg)) {
+                .Command => switch (try check_command(arg)) {
+                    .Output => {
+                        i += 1;
+                        if (std.os.argv.len <= i) return Error.Argument;
+
+                        const output_arg = convert(std.os.argv[i]);
+                        if (try check_argument(output_arg) != ArgumentKind.Path) return Error.Argument;
+                        if (output_path) |_| return Error.MoreThanOneOutputPath;
+
+                        output_path = output_arg;
+                    },
+                    .Debug => {
+                        if (log) |_| return Error.DebugFlagCombination else log = .Debug;
+                    },
+                    .Info => {
+                        if (log) |_| return Error.DebugFlagCombination else log = .Info;
+                    },
+                },
+                .Path => {
+                    if (input_path) |_| return Error.MoreThanOneInputPath;
+                    input_path = arg;
+                },
+            }
+
+            i += 1;
+        }
+
+        return CommandLineArgument{
+            .input_path = input_path,
+            .output_path = output_path,
+            .log = log orelse .None,
+        };
+    }
+};
+
+pub const DeltaTime = struct {
+    kind: Kind,
+    value: usize,
+
+    const Kind = enum {
+        Seconds,
+        MiliSeconds,
+        MicroSeconds,
+        NanoSeconds,
+
+        fn as_string(self: Kind) []const u8 {
+            return switch (self) {
+                .Seconds => "s",
+                .MiliSeconds => "ms",
+                .MicroSeconds => "mu",
+                .NanoSeconds => "ns",
+            };
+        }
+    };
+
+    const MICRO_TO_NANO: usize = 1000;
+    const MILI_TO_NANO: usize = 1000_000;
+    const SECOND_TO_NANO: usize = 1000_000_000;
+
+    pub fn from_nano(nano: usize) DeltaTime {
+        if (nano < MICRO_TO_NANO) {
+            return DeltaTime{
+                .kind = .NanoSeconds,
+                .value = nano,
+            };
+        }
+
+        if (nano < MILI_TO_NANO) {
+            return DeltaTime{
+                .kind = .MicroSeconds,
+                .value = nano / MICRO_TO_NANO,
+            };
+        }
+
+        if (nano < SECOND_TO_NANO) {
+            return DeltaTime{
+                .kind = .MiliSeconds,
+                .value = nano / MILI_TO_NANO,
+            };
+        }
+
+        return DeltaTime{
+            .kind = .Seconds,
+            .value = nano / SECOND_TO_NANO,
+        };
+    }
+
+    pub fn show(self: DeltaTime) void {
+        print(.Info, "{}{}", .{ self.value, self.kind.as_string() });
+    }
+};
+
 pub const print = Logger.printf;
+
+pub fn time(f: fn () anyerror!void) !void {
+    const start = try std.time.Instant.now();
+    try f();
+    DeltaTime.from_nano((try std.time.Instant.now()).since(start)).show();
+}
 
 pub fn convert(input: [*:0]u8) []const u8 {
     var len: usize = 0;
@@ -233,8 +393,8 @@ pub fn is_ascci(char: u8) bool {
     return is_alpha(char) or is_digit(char);
 }
 
-pub fn assert(flag: bool) !void {
+pub fn assert(flag: bool) void {
     if (!flag) {
-        return error.AssertionFailed;
+        unreachable;
     }
 }

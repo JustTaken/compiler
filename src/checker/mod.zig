@@ -4,79 +4,52 @@ const util = @import("util");
 const constant = @import("constant.zig");
 const generator = @import("generator.zig");
 
-const Arena = mem.Arena;
-const Stream = collections.Stream;
-const Vec = collections.Vec;
-const StringMap = collections.StringMap;
-const Array = collections.Array;
-const String = collections.String;
-const Operation = generator.Operation;
-
-const Generator = generator.Generator;
-
-const Destination = generator.Destination;
-const Memory = generator.Memory;
-const Register = generator.Register;
-
-const ConstantBinary = constant.ConstantBinary;
-const ConstantCall = constant.ConstantCall;
-const ConstantUnary = constant.ConstantUnary;
-const ConstantParameter = constant.ConstantParameter;
-const ConstantNumber = constant.ConstantNumber;
-const ConstantScope = constant.ConstantScope;
-const ConstantConstruct = constant.ConstantConstruct;
-const ConstantFieldAcess = constant.ConstantFieldAcess;
-const ConstantType = constant.ConstantType;
-const ConstantProcedure = constant.ConstantProcedure;
-const ConstantKind = constant.ConstantKind;
-const Constant = constant.Constant;
-
 pub const TypeChecker = struct {
-    parameters: Vec(*const ConstantType),
-    constants: Vec(Constant),
+    parameters: collections.Vec(*const constant.ConstantType),
+    constants: collections.Vec(constant.Constant),
 
-    names: Vec([]const u8),
+    names: collections.Vec([]const u8),
 
-    variables: StringMap(*Constant),
-    variable_constants: Vec(Constant),
-    variable_refs: Vec(*[]const u8),
+    variables: collections.StringMap(*constant.Constant),
+    variable_constants: collections.Vec(constant.Constant),
+    variable_refs: collections.Vec(*[]const u8),
 
-    generator: Generator,
-    arena: *Arena,
+    generator: generator.Generator,
+    arena: *mem.Arena,
 
     const VARIABLE_MAX: u32 = 20;
 
-    pub fn new(allocator: *Arena) error{OutOfMemory}!TypeChecker {
+    pub fn new(allocator: *mem.Arena) error{OutOfMemory}!TypeChecker {
         var self: TypeChecker = undefined;
 
-        self.arena = try allocator.child("TypeChecker", mem.PAGE_SIZE * 2 + (mem.PAGE_SIZE >> 1) - 2 * @sizeOf(Arena));
+        self.arena = try allocator.child("TypeChecker", mem.PAGE_SIZE * 2 + (mem.PAGE_SIZE >> 1) - 2 * @sizeOf(mem.Arena));
         errdefer self.arena.deinit();
 
-        self.parameters = try Vec(*const ConstantType).new(VARIABLE_MAX, self.arena);
+        self.parameters = try collections.Vec(*const constant.ConstantType).new(VARIABLE_MAX, self.arena);
         errdefer self.parameters.deinit(self.arena);
 
-        self.constants = try Vec(Constant).new(VARIABLE_MAX, self.arena);
+        self.constants = try collections.Vec(constant.Constant).new(VARIABLE_MAX, self.arena);
         errdefer self.constants.deinit(self.arena);
 
-        self.variables = try StringMap(*Constant).new(VARIABLE_MAX, self.arena);
+        self.variables = try collections.StringMap(*constant.Constant).new(VARIABLE_MAX, self.arena);
         errdefer self.variables.deinit(self.arena);
 
-        self.variable_constants = try Vec(Constant).new(VARIABLE_MAX, self.arena);
+        self.variable_constants = try collections.Vec(constant.Constant).new(VARIABLE_MAX, self.arena);
         errdefer self.variable_constants.deinit(self.arena);
 
-        self.variable_refs = try Vec(*[]const u8).new(VARIABLE_MAX, self.arena);
+        self.variable_refs = try collections.Vec(*[]const u8).new(VARIABLE_MAX, self.arena);
         errdefer self.variable_refs.deinit(self.arena);
 
-        self.names = try Vec([]const u8).new(VARIABLE_MAX, self.arena);
+        self.names = try collections.Vec([]const u8).new(VARIABLE_MAX, self.arena);
         errdefer self.names.deinit(self.arena);
 
-        self.generator = try Generator.new(self.arena);
+        self.generator = try generator.Generator.new(self.arena);
         errdefer self.generator.deinit();
 
         return self;
     }
 
-    fn push_variable(self: *TypeChecker, name: []const u8, cons: Constant) void {
+    fn push_variable(self: *TypeChecker, name: []const u8, cons: constant.Constant) void {
         self.variable_constants.push(cons) catch @panic("TODO");
 
         const ptr = self.variable_constants.last() catch @panic("TODO");
@@ -87,8 +60,8 @@ pub const TypeChecker = struct {
     }
 
     pub fn push_scope(self: *TypeChecker, expression_count: u32, declaration_count: u32, has_return: bool) void {
-        var constants = Array(Constant).new(expression_count, self.arena) catch @panic("TODO");
-        var return_value: ?Constant = null;
+        var constants = collections.Array(constant.Constant).new(expression_count, self.arena) catch @panic("TODO");
+        var return_value: ?constant.Constant = null;
 
         if (has_return) {
             return_value = self.constants.pop() catch @panic("TODO");
@@ -103,7 +76,7 @@ pub const TypeChecker = struct {
             c.len = 0;
         }
 
-        self.constants.push(Constant{ .Scope = self.arena.create(ConstantScope, ConstantScope{
+        self.constants.push(constant.Constant{ .Scope = self.arena.create(constant.ConstantScope, constant.ConstantScope{
             .constants = constants,
             .return_value = return_value,
             .used = false,
@@ -115,7 +88,7 @@ pub const TypeChecker = struct {
         const name = self.names.pop() catch @panic("TODO");
 
         if (self.variables.get(name)) |variable| {
-            self.constants.push(Constant{ .Ref = variable.* }) catch @panic("TODO");
+            self.constants.push(constant.Constant{ .Ref = variable.* }) catch @panic("TODO");
         } else {
             @panic("TODO");
         }
@@ -124,17 +97,17 @@ pub const TypeChecker = struct {
     pub fn push_number(self: *TypeChecker, string: []const u8) void {
         const number = util.parse(string);
 
-        self.constants.push(Constant{ .Number = self.arena.create(ConstantNumber, ConstantNumber{
+        self.constants.push(constant.Constant{ .Number = self.arena.create(constant.ConstantNumber, constant.ConstantNumber{
             .inner = null,
             .value = number,
             .usage = 0,
         }) catch @panic("TODO") }) catch @panic("TODO");
     }
 
-    pub fn push_binary(self: *TypeChecker, operator: ConstantBinary.Operator) void {
+    pub fn push_binary(self: *TypeChecker, operator: constant.ConstantBinary.Operator) void {
         var right = self.constants.pop() catch @panic("TODO");
         var left = self.constants.pop() catch @panic("TODO");
-        var inner: ?*const ConstantType = null;
+        var inner: ?*const constant.ConstantType = null;
 
         const left_inner = left.get_type();
         const right_inner = right.get_type();
@@ -155,7 +128,7 @@ pub const TypeChecker = struct {
             }
         }
 
-        self.constants.push(Constant{ .Binary = self.arena.create(ConstantBinary, ConstantBinary{
+        self.constants.push(constant.Constant{ .Binary = self.arena.create(constant.ConstantBinary, constant.ConstantBinary{
             .left = left,
             .right = right,
             .inner = inner,
@@ -164,10 +137,10 @@ pub const TypeChecker = struct {
         }) catch @panic("TODO") }) catch @panic("TODO");
     }
 
-    pub fn push_unary(self: *TypeChecker, operator: ConstantUnary.Operator) void {
+    pub fn push_unary(self: *TypeChecker, operator: constant.ConstantUnary.Operator) void {
         const cons = self.constants.pop() catch @panic("TODO");
 
-        self.constants.push(Constant{ .Unary = self.arena.create(ConstantUnary, ConstantUnary{
+        self.constants.push(constant.Constant{ .Unary = self.arena.create(constant.ConstantUnary, constant.ConstantUnary{
             .constant = cons,
             .operator = operator,
             .usage = 0,
@@ -180,7 +153,7 @@ pub const TypeChecker = struct {
         const procedure = self.get_procedure(name);
         if (procedure.parameters.len != argument_count) @panic("TODO: show wrong arguments");
 
-        var arguments = Array(Constant).new(argument_count, self.arena) catch @panic("TODO");
+        var arguments = collections.Array(constant.Constant).new(argument_count, self.arena) catch @panic("TODO");
 
         for (0..argument_count) |i| {
             var argument = self.constants.pop() catch @panic("TODO");
@@ -192,7 +165,7 @@ pub const TypeChecker = struct {
             arguments.set(argument, i) catch unreachable;
         }
 
-        self.constants.push(Constant{ .Call = self.arena.create(ConstantCall, ConstantCall{
+        self.constants.push(constant.Constant{ .Call = self.arena.create(constant.ConstantCall, constant.ConstantCall{
             .procedure = procedure,
             .arguments = arguments,
             .usage = 0,
@@ -206,7 +179,7 @@ pub const TypeChecker = struct {
         const size = inner.size;
 
         self.parameters.push(inner) catch @panic("TODO");
-        self.push_variable(name, Constant{ .Parameter = self.arena.create(ConstantParameter, ConstantParameter{
+        self.push_variable(name, constant.Constant{ .Parameter = self.arena.create(constant.ConstantParameter, constant.ConstantParameter{
             .offset = current_size,
             .inner = inner,
             .usage = 0,
@@ -215,14 +188,14 @@ pub const TypeChecker = struct {
         return size;
     }
 
-    fn get_property(self: *TypeChecker, cons: Constant, name: []const u8) Constant {
+    fn get_property(self: *TypeChecker, cons: constant.Constant, name: []const u8) constant.Constant {
         switch (cons) {
             .Ref => |ref| {
                 const inner = ref.get_type() orelse @panic("Show that this type does not exist at this time");
                 const index = inner.field_index(name) catch @panic("Show that property does not exist");
                 const offset = inner.offset(index);
 
-                return Constant{ .FieldAcess = self.arena.create(ConstantFieldAcess, ConstantFieldAcess{
+                return constant.Constant{ .FieldAcess = self.arena.create(constant.ConstantFieldAcess, constant.ConstantFieldAcess{
                     .offset = offset,
                     .constant = cons,
                     .usage = 0,
@@ -231,13 +204,13 @@ pub const TypeChecker = struct {
             },
             .Construct => |construct| {
                 const index = construct.inner.field_index(name) catch @panic("Show that property does not exist");
-                return Constant{ .Ref = &construct.constants.items[index] };
+                return constant.Constant{ .Ref = &construct.constants.items[index] };
             },
             .FieldAcess => |field| {
                 const index = field.inner.field_index(name) catch @panic("TODO: Show that property do not exist");
                 const offset = field.inner.offset(index);
 
-                return Constant{ .FieldAcess = self.arena.create(ConstantFieldAcess, ConstantFieldAcess{
+                return constant.Constant{ .FieldAcess = self.arena.create(constant.ConstantFieldAcess, constant.ConstantFieldAcess{
                     .offset = offset,
                     .constant = cons,
                     .usage = 0,
@@ -248,7 +221,7 @@ pub const TypeChecker = struct {
                 const index = call.procedure.inner.field_index(name) catch @panic("TODO");
                 const offset = call.procedure.inner.offset(index);
 
-                return Constant{ .FieldAcess = self.arena.create(ConstantFieldAcess, ConstantFieldAcess{
+                return constant.Constant{ .FieldAcess = self.arena.create(constant.ConstantFieldAcess, constant.ConstantFieldAcess{
                     .offset = offset,
                     .constant = cons,
                     .usage = 0,
@@ -280,7 +253,7 @@ pub const TypeChecker = struct {
     pub fn push_type(self: *TypeChecker, field_count: u32, annotated_size: u32) void {
         const name = self.names.pop() catch @panic("TODO");
 
-        var fields = Array(ConstantType.Field).new(field_count, self.arena) catch @panic("TODO");
+        var fields = collections.Array(constant.ConstantType.Field).new(field_count, self.arena) catch @panic("TODO");
 
         var size: u32 = annotated_size;
         var alignment: u32 = annotated_size;
@@ -293,13 +266,13 @@ pub const TypeChecker = struct {
             size += inner.size;
             alignment = util.max(alignment, inner.alignment);
 
-            fields.set(ConstantType.Field{
+            fields.set(constant.ConstantType.Field{
                 .name = field_name,
                 .inner = inner,
             }, i) catch unreachable;
         }
 
-        self.push_variable(name, Constant{ .Type = self.arena.create(ConstantType, ConstantType{
+        self.push_variable(name, constant.Constant{ .Type = self.arena.create(constant.ConstantType, constant.ConstantType{
             .name = name,
             .fields = fields,
             .size = size,
@@ -314,7 +287,7 @@ pub const TypeChecker = struct {
 
         if (inner.fields.len != field_count) @panic("Should not happen");
 
-        var constants = Array(Constant).new(field_count, self.arena) catch @panic("TODO");
+        var constants = collections.Array(constant.Constant).new(field_count, self.arena) catch @panic("TODO");
 
         for (0..field_count) |i| {
             const name = self.names.pop() catch @panic("TODO");
@@ -332,7 +305,7 @@ pub const TypeChecker = struct {
 
         _ = self.names.pop() catch unreachable;
 
-        self.constants.push(Constant{ .Construct = self.arena.create(ConstantConstruct, ConstantConstruct{
+        self.constants.push(constant.Constant{ .Construct = self.arena.create(constant.ConstantConstruct, constant.ConstantConstruct{
             .constants = constants,
             .inner = inner,
             .usage = 0,
@@ -368,14 +341,14 @@ pub const TypeChecker = struct {
         if (self.variable_refs.len != variable_start) @panic("TODO");
         if (self.variable_constants.len != variable_start) unreachable;
 
-        var parameters = Array(*const ConstantType).new(parameter_count, self.arena) catch @panic("TODO");
+        var parameters = collections.Array(*const constant.ConstantType).new(parameter_count, self.arena) catch @panic("TODO");
         for (0..parameter_count) |i| {
             const parameter = self.parameters.pop() catch @panic("TODO");
 
             parameters.set(parameter, i) catch unreachable;
         }
 
-        self.push_variable(name, Constant{ .Procedure = self.arena.create(ConstantProcedure, ConstantProcedure{
+        self.push_variable(name, constant.Constant{ .Procedure = self.arena.create(constant.ConstantProcedure, constant.ConstantProcedure{
             .offset = offset,
             .inner = inner,
             .parameters = parameters,
@@ -383,23 +356,23 @@ pub const TypeChecker = struct {
         }) catch @panic("TODO") });
     }
 
-    fn get_type(self: *TypeChecker, name: []const u8) *ConstantType {
+    fn get_type(self: *TypeChecker, name: []const u8) *constant.ConstantType {
         const cons = (self.variables.get(name) orelse @panic("TODO: treat type not declared")).*.*;
 
-        if (@as(ConstantKind, cons) != Constant.Type) @panic("TODO");
+        if (@as(constant.ConstantKind, cons) != constant.Constant.Type) @panic("TODO");
 
         return cons.Type;
     }
 
-    fn get_procedure(self: *TypeChecker, name: []const u8) *const ConstantProcedure {
+    fn get_procedure(self: *TypeChecker, name: []const u8) *const constant.ConstantProcedure {
         const cons = (self.variables.get(name) orelse @panic("TODO: treat type not declared")).*.*;
 
-        if (@as(ConstantKind, cons) != Constant.Procedure) @panic("TODO: treat type not declared");
+        if (@as(constant.ConstantKind, cons) != constant.Constant.Procedure) @panic("TODO: treat type not declared");
 
         return cons.Procedure;
     }
 
-    pub fn generate(self: *TypeChecker, stream: Stream) void {
+    pub fn generate(self: *TypeChecker, stream: collections.Stream) void {
         const main_procedure = self.get_procedure("main");
         if (main_procedure.inner.size != 4) @panic("TODO: treat main procedure mismatch return type");
 

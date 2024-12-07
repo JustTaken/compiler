@@ -4,16 +4,6 @@ const util = @import("util");
 const elf = @import("elf.zig");
 const constant = @import("constant.zig");
 
-const Arena = mem.Arena;
-
-const Vec = collections.Vec;
-const Stream = collections.Stream;
-const String = collections.String;
-const ProgramHeader = elf.ProgramHeader;
-const ElfHeader = elf.Header;
-
-const Constant = constant.Constant;
-
 const BASE_SIZE: u32 = 4;
 
 pub const Register = enum(u8) {
@@ -130,7 +120,7 @@ pub const BinaryOperation = struct {
         }
     }
 
-    fn write_mov(self: BinaryOperation, buffer: *String) void {
+    fn write_mov(self: BinaryOperation, buffer: *collections.String) void {
         switch (self.destination) {
             .Stack => switch (self.source) {
                 .Register => |r| buffer.push(0x50 + r.value()) catch @panic("TODO"),
@@ -170,7 +160,7 @@ pub const BinaryOperation = struct {
         }
     }
 
-    fn write_add(self: BinaryOperation, buffer: *String) void {
+    fn write_add(self: BinaryOperation, buffer: *collections.String) void {
         switch (self.destination) {
             .Register => |rd| switch (self.source) {
                 .Register => |rs| buffer.extend(&.{ 0x01, 0b11000000 + (rs.value() << 3) + rd.value() }) catch @panic("TODO"),
@@ -195,7 +185,7 @@ pub const BinaryOperation = struct {
         }
     }
 
-    fn write_sub(self: BinaryOperation, buffer: *String) void {
+    fn write_sub(self: BinaryOperation, buffer: *collections.String) void {
         switch (self.destination) {
             .Register => |rd| switch (self.source) {
                 .Register => |rs| buffer.extend(&.{ 0x29, 0b11000000 + (rs.value() << 3) + rd.value() }) catch @panic("TODO"),
@@ -213,7 +203,7 @@ pub const BinaryOperation = struct {
         }
     }
 
-    fn write_mul(self: BinaryOperation, buffer: *String) void {
+    fn write_mul(self: BinaryOperation, buffer: *collections.String) void {
         switch (self.destination) {
             .Register => |rd| switch (self.source) {
                 .Immediate => |i| buffer.extend(&.{ 0x6B, 0b01101000 + rd.value(), to_bytes(i)[0] }) catch @panic("TODO"),
@@ -262,7 +252,7 @@ pub const Operation = union(OperationKind) {
         }
     }
 
-    fn write(self: Operation, buffer: *String) void {
+    fn write(self: Operation, buffer: *collections.String) void {
         util.print(.Info, "{}", .{self});
 
         switch (self) {
@@ -324,12 +314,12 @@ pub const Operation = union(OperationKind) {
 };
 
 pub const Generator = struct {
-    code: String,
-    data: String,
-    operations: Vec(Operation),
+    code: collections.String,
+    data: collections.String,
+    operations: collections.Vec(Operation),
     manager: Manager,
 
-    arena: *Arena,
+    arena: *mem.Arena,
 
     pub const Error = error{
         OutOfRegisters,
@@ -337,13 +327,13 @@ pub const Generator = struct {
     };
 
     const Manager = struct {
-        free: Vec(Register),
-        resources: Vec(Resource),
+        free: collections.Vec(Register),
+        resources: collections.Vec(Resource),
         stack: usize,
 
         pub const Resource = struct {
             variant: Variant,
-            ptr: *const Constant,
+            ptr: *const constant.Constant,
 
             const Kind = enum {
                 Register,
@@ -365,15 +355,15 @@ pub const Generator = struct {
             }
         };
 
-        fn new(arena: *Arena) error{OutOfMemory}!Manager {
+        fn new(arena: *mem.Arena) error{OutOfMemory}!Manager {
             const usable_registers = &.{
                 Register.Rcx, Register.Rdi, Register.Rdx, Register.Rbx, Register.Rax,
             };
 
-            var resources = try Vec(Resource).new(usable_registers.len, arena);
+            var resources = try collections.Vec(Resource).new(usable_registers.len, arena);
             errdefer resources.deinit(arena);
 
-            var free = try Vec(Register).new(usable_registers.len, arena);
+            var free = try collections.Vec(Register).new(usable_registers.len, arena);
             errdefer free.deinit(arena);
 
             free.extend(usable_registers) catch unreachable;
@@ -389,7 +379,7 @@ pub const Generator = struct {
             self.stack += size;
         }
 
-        fn get(self: *Manager, cons: *const Constant) Destination {
+        fn get(self: *Manager, cons: *const constant.Constant) Destination {
             const inner = cons.get_type().?;
 
             const resource = blk: {
@@ -424,7 +414,7 @@ pub const Generator = struct {
             return resource.as_destination();
         }
 
-        fn get_registry(self: Manager, cons: *const Constant) ?Destination {
+        fn get_registry(self: Manager, cons: *const constant.Constant) ?Destination {
             for (self.resources.offset(0) catch unreachable) |resource| {
                 if (resource.ptr == cons) return resource.as_destination();
             }
@@ -444,25 +434,25 @@ pub const Generator = struct {
             self.resources.clear();
         }
 
-        fn deinit(self: *Manager, arena: *Arena) void {
+        fn deinit(self: *Manager, arena: *mem.Arena) void {
             self.free.deinit(arena);
             self.resources.deinit(arena);
         }
     };
 
-    pub fn new(allocator: *Arena) error{OutOfMemory}!Generator {
+    pub fn new(allocator: *mem.Arena) error{OutOfMemory}!Generator {
         var self: Generator = undefined;
 
         self.arena = try allocator.child("Generator", mem.PAGE_SIZE >> 1);
         errdefer self.arena.deinit();
 
-        self.code = try String.new(512, self.arena);
+        self.code = try collections.String.new(512, self.arena);
         errdefer self.code.deinit(self.arena);
 
-        self.data = try String.new(1, self.arena);
+        self.data = try collections.String.new(1, self.arena);
         errdefer self.data.deinit(self.arena);
 
-        self.operations = try Vec(Operation).new(16, self.arena);
+        self.operations = try collections.Vec(Operation).new(16, self.arena);
         errdefer self.operations.deinit(self.arena);
 
         self.manager = try Manager.new(self.arena);
@@ -479,10 +469,9 @@ pub const Generator = struct {
         }
     }
 
-    pub fn evaluate(self: *Generator, cons: *Constant, kind: BinaryKind, destination: ?Destination) Source {
+    pub fn evaluate(self: *Generator, cons: *constant.Constant, kind: BinaryKind, destination: ?Destination) Source {
         switch (cons.*) {
             .Number => |n| {
-                util.print(.Info, ".Number", .{});
                 const source = Source{
                     .Immediate = n.value,
                 };
@@ -502,7 +491,6 @@ pub const Generator = struct {
                 }
             },
             .Binary => |binary| {
-                util.print(.Info, ".Binary", .{});
                 const dst = destination orelse @panic("TODO");
 
                 _ = self.evaluate(&binary.right, .Mov, dst);
@@ -511,12 +499,10 @@ pub const Generator = struct {
                 return dst.as_source();
             },
             .Unary => |unary| {
-                util.print(.Info, ".Unary", .{});
                 _ = self.evaluate(&unary.constant, .Mov, null);
             },
             .Parameter => |_| @panic("TODO"),
             .Call => |call| {
-                util.print(.Info, ".Call", .{});
                 const rax_used = self.manager.is_used(Register.Rax);
 
                 if (rax_used) {
@@ -586,7 +572,6 @@ pub const Generator = struct {
                 };
             },
             .Construct => |construct| {
-                util.print(.Info, ".Construct", .{});
                 var offset: usize = 0;
                 const dest = destination orelse @panic("TODO");
                 const dst = blk: {
@@ -622,7 +607,6 @@ pub const Generator = struct {
                 return dest.as_source();
             },
             .FieldAcess => |field| {
-                util.print(.Info, ".FieldAcess", .{});
                 const constant_source = self.evaluate(&field.constant, .Mov, null);
                 const register = constant_source.Memory.register;
                 const offset = constant_source.Memory.offset;
@@ -650,7 +634,6 @@ pub const Generator = struct {
                 } };
             },
             .Ref => |ref| {
-                util.print(.Info, ".Ref", .{});
 
                 const dst = blk: {
                     if (self.manager.get_registry(ref)) |dst| {
@@ -682,7 +665,6 @@ pub const Generator = struct {
                 return dst.as_source();
             },
             .Scope => |scope| {
-                util.print(.Info, ".Scope", .{});
                 for (0..scope.constants.len) |i| {
                     _ = self.evaluate(&scope.constants.items[i], .Mov, null);
                 }
@@ -697,14 +679,14 @@ pub const Generator = struct {
         @panic("TODO");
     }
 
-    pub fn push_procedure(self: *Generator, return_value: *Constant) void {
+    pub fn push_procedure(self: *Generator, return_value: *constant.Constant) void {
         util.print(.Info, "--------------------- Procedure start () - Offset () ---------------", .{});
 
         defer self.operations.clear();
 
         _ = self.evaluate(return_value, .Mov, Destination{ .Register = Register.Rax });
 
-        var startup_instructions = Vec(Operation).new(2, self.arena) catch @panic("TODO");
+        var startup_instructions = collections.Vec(Operation).new(2, self.arena) catch @panic("TODO");
         defer startup_instructions.deinit(self.arena);
 
         self.operations.push(Operation.Ret) catch @panic("TODO");
@@ -722,7 +704,7 @@ pub const Generator = struct {
         util.print(.Info, "--------------------- Procedure end ---------------", .{});
     }
 
-    pub fn generate(self: *Generator, stream: Stream, main_procedure_offset: usize) void {
+    pub fn generate(self: *Generator, stream: collections.Stream, main_procedure_offset: usize) void {
         const program_end = [_]Operation{
             Operation{ .Call = main_procedure_offset },
             Operation{ .Binary = BinaryOperation{
@@ -738,8 +720,8 @@ pub const Generator = struct {
             Operation.Syscall,
         };
 
-        const elf_header = ElfHeader.new(.Exec, 1, self.code.len);
-        const program_header = ProgramHeader.new(.Load, &.{
+        const elf_header = elf.Header.new(.Exec, 1, self.code.len);
+        const program_header = elf.ProgramHeader.new(.Load, &.{
             .Readable,
             .Executable,
         }, self.code.len);
@@ -748,8 +730,8 @@ pub const Generator = struct {
             operation.write(&self.code);
         }
 
-        const h_size = @sizeOf(ElfHeader);
-        const ph_size = @sizeOf(ProgramHeader);
+        const h_size = @sizeOf(elf.Header);
+        const ph_size = @sizeOf(elf.ProgramHeader);
 
         self.code.shift_right(0, h_size + ph_size) catch @panic("TODO");
 
@@ -757,8 +739,8 @@ pub const Generator = struct {
 
         self.code.set_len(0) catch unreachable;
 
-        self.code.extend(mem.as_bytes(ElfHeader, &elf_header)) catch @panic("TODO");
-        self.code.extend(mem.as_bytes(ProgramHeader, &program_header)) catch @panic("TODO");
+        self.code.extend(mem.as_bytes(elf.Header, &elf_header)) catch @panic("TODO");
+        self.code.extend(mem.as_bytes(elf.ProgramHeader, &program_header)) catch @panic("TODO");
 
         self.code.set_len(code_len) catch unreachable;
 

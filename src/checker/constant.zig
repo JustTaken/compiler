@@ -1,24 +1,6 @@
 const collections = @import("collections");
 const mem = @import("mem");
-const util = @import("util");
 const generator = @import("generator.zig");
-
-const Generator = generator.Generator;
-const Operation = generator.Operation;
-const Arena = mem.Arena;
-
-const Range = util.Range;
-const String = collections.String;
-const Array = collections.Array;
-
-const BinaryOperation = generator.BinaryOperation;
-const BinaryOperationKind = generator.BinaryKind;
-const Destination = generator.Destination;
-const DestinationKind = generator.DestinationKind;
-const SourceKind = generator.SourceKind;
-const Source = generator.Source;
-const Memory = generator.Memory;
-const Register = generator.Register;
 
 pub const ConstantBinary = struct {
     operator: Operator,
@@ -43,11 +25,11 @@ pub const ConstantBinary = struct {
             };
         }
 
-        pub fn to_gen_operation(self: Operator) BinaryOperationKind {
+        pub fn to_gen_operation(self: Operator) generator.BinaryOperationKind {
             return switch (self) {
-                Operator.Add => BinaryOperationKind.Add,
-                Operator.Sub => BinaryOperationKind.Sub,
-                Operator.Mul => BinaryOperationKind.Mul,
+                Operator.Add => .Add,
+                Operator.Sub => .Sub,
+                Operator.Mul => .Mul,
                 else => @panic("TODO"),
             };
         }
@@ -67,7 +49,7 @@ pub const ConstantUnary = struct {
 
 pub const ConstantCall = struct {
     procedure: *const ConstantProcedure,
-    arguments: Array(Constant),
+    arguments: collections.Array(Constant),
     usage: usize,
 };
 
@@ -85,7 +67,7 @@ pub const ConstantNumber = struct {
 
 pub const ConstantScope = struct {
     return_value: ?Constant,
-    constants: Array(Constant),
+    constants: collections.Array(Constant),
     usage: usize,
     used: bool,
 
@@ -108,7 +90,7 @@ pub const ConstantScope = struct {
 
 pub const ConstantConstruct = struct {
     inner: *const ConstantType,
-    constants: Array(Constant),
+    constants: collections.Array(Constant),
     usage: usize,
 };
 
@@ -135,7 +117,7 @@ pub const ConstantType = struct {
     name: []const u8,
     size: u32,
     alignment: u32,
-    fields: Array(Field),
+    fields: collections.Array(Field),
     usage: usize,
 
     pub const Field = struct {
@@ -168,7 +150,7 @@ pub const ConstantType = struct {
 pub const ConstantProcedure = struct {
     offset: usize,
     inner: *ConstantType,
-    parameters: Array(*const ConstantType),
+    parameters: collections.Array(*const ConstantType),
     usage: usize,
 };
 
@@ -308,7 +290,7 @@ pub const Constant = union(ConstantKind) {
         };
     }
 
-    fn unuse(self: Constant, gen: *Generator) void {
+    fn unuse(self: Constant, gen: *generator.Generator) void {
         switch (self) {
             .Parameter, .Number => {},
             .Procedure, .Type => unreachable,
@@ -317,13 +299,13 @@ pub const Constant = union(ConstantKind) {
             .Call => |call| {
                 if (call.usage > 0) return;
                 if (call.procedure.inner.size > 4) {
-                    gen.push_operation(Operation{ .Binary = BinaryOperation{
-                        .kind = BinaryOperationKind.Add,
-                        .source = Source{ .Immediate = call.procedure.inner.size },
-                        .destination = Destination{ .Register = Register.Rsp },
+                    gen.push_operation(generator.Operation{ .Binary = generator.BinaryOperation{
+                        .kind = .Add,
+                        .source = generator.Source{ .Immediate = call.procedure.inner.size },
+                        .destination = generator.Destination{ .Register = .Rsp },
                     } });
                 } else {
-                    gen.give_back(Source{ .Register = Register.Rax }) catch @panic("TODO");
+                    gen.give_back(generator.Source{ .Register = .Rax }) catch @panic("TODO");
                 }
             },
             .Unary => |unary| unary.constant.unuse(gen),
@@ -350,7 +332,7 @@ pub const Constant = union(ConstantKind) {
         }
     }
 
-    pub fn deinit(self: Constant, arena: *Arena) void {
+    pub fn deinit(self: Constant, arena: *mem.Arena) void {
         switch (self) {
             .Ref => {},
             .Parameter => arena.destroy(ConstantParameter, 1),
