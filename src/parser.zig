@@ -1,12 +1,16 @@
-const lexer = @import("lexer/mod.zig");
-const checker = @import("checker/mod.zig");
 const mem = @import("mem");
 const util = @import("util");
 const collections = @import("collections");
 
+const generator = @import("generator/mod.zig");
+const checker = @import("checker/mod.zig");
+const node = @import("node/mod.zig");
+const lexer = @import("lexer/mod.zig");
 const token = lexer.token;
 
-const Precedence = enum(usize) {
+const ARGUMENT_MAX: u32 = 20;
+
+pub const Precedence = enum(usize) {
     Nothing,
     Assignment,
     Equality,
@@ -19,9 +23,70 @@ const Precedence = enum(usize) {
     Scope,
 };
 
-const Fn = *const fn (parser: *Parser) void;
+const RuleKind = enum {
+    ParentesisLeft,
+    CurlyBracketLeft,
+    Dot,
+    Minus, Plus, Bang, Equality,
+    Factor,
+    Comparison,
+    Identifier,
+    String,
+    Number,
 
-const Rule = struct {
+    fn init_buffer(buffer: *collections.Vec(Rule)) error{OutOfBounds}!void {
+        const data = [_] Rule {
+            Rule.new(Parser.group, Parser.call, .Call),
+            Rule.new(Parser.scope, Parser.construct, .Scope),
+            Rule.new(null, Parser.property, .Call),
+
+            Rule.new(Parser.unary, Parser.binary, .Term),
+            Rule.new(null, Parser.binary, .Term),
+            Rule.new(Parser.unary, null, .Equality),
+            Rule.new(null, Parser.binary, .Equality),
+            Rule.new(null, Parser.binary, .Factor),
+            Rule.new(null, Parser.binary, .Comparison),
+
+            Rule.new(Parser.identifier, null, .Nothing),
+            Rule.new(Parser.string, null, .Nothing),
+            Rule.new(Parser.number, null, .Nothing),
+        };
+
+        for (data) |f| {
+            try buffer.push(f);
+        }
+    }
+
+    fn from_token(t: token.Token) usize {
+        const kind: RuleKind = switch (t) {
+            .Symbol => |symbol| switch (symbol) {
+                .ParentesisLeft => .ParentesisLeft,
+                .CurlyBracketLeft => .CurlyBracketLeft,
+                .Dot => .Dot,
+                else => @panic("TODO"),
+            },
+            .Operator => |operator| switch (operator) {
+                .Minus => .Minus,
+                .Plus => .Plus,
+                .Bang => .Bang,
+                .BangEqual, .EqualEqual => .Equality,
+                .Slash, .Star => .Factor,
+                else => @panic("TODO"),
+            },
+            .Identifier => .Identifier,
+            .Number => .Number,
+            .String => .String,
+            .Keyword => @panic("TODO"),
+            .Eof => @panic("TODO"),
+        };
+
+        return @intFromEnum(kind);
+    }
+};
+
+const Fn = *const fn (parser: *Parser, lexer: *lexer.Lexer) void;
+
+pub const Rule = struct {
     prefix: ?Fn,
     infix: ?Fn,
     precedence: Precedence,
@@ -33,60 +98,42 @@ const Rule = struct {
             .precedence = precedence,
         };
     }
-
-    fn from_token(t: token.Token) Rule {
-        return switch (t) {
-            .Symbol => |symbol| switch (symbol) {
-                .ParentesisLeft => new(Parser.grouping, Parser.call, .Call),
-                .CurlyBracketLeft => new(Parser.scope, Parser.construct, .Scope),
-                .Dot => new(null, Parser.property, .Call),
-                else => new(null, null, .Nothing),
-            },
-            .Operator => |operator| switch (operator) {
-                .Minus => new(Parser.unary, Parser.binary, .Term),
-                .Plus => new(null, Parser.binary, .Term),
-                .Bang => new(Parser.unary, null, .Equality),
-                .BangEqual, .EqualEqual => new(null, Parser.binary, .Equality),
-                .Slash, .Star => new(null, Parser.binary, .Factor),
-                else => new(null, Parser.binary, .Comparison),
-            },
-            .Number => new(Parser.number, null, .Nothing),
-            .Identifier => new(Parser.identifier, null, .Nothing),
-            .String => new(Parser.string, null, .Nothing),
-            .Keyword => new(null, null, .Nothing),
-            .Eof => new(null, null, .Nothing),
-        };
-    }
 };
 
 pub const Parser = struct {
-    lexer: lexer.Lexer,
-    checker: checker.TypeChecker,
+    rules: collections.Vec(Rule),
+    nodes: collections.Vec(node.Node),
     arena: *mem.Arena,
 
-    pub fn new(input: collections.Stream, allocator: *mem.Arena) error{OutOfMemory}!Parser {
-        var self: Parser = undefined;
+    pub fn new(allocator: *mem.Arena) error{OutOfBounds, OutOfMemory}!Parser {
+        var self = Parser {
+            .rules = undefined,
+            .nodes = undefined,
+            .arena = try allocator.child("Parser", mem.PAGE_SIZE * 2),
+        };
 
-        self.arena = try allocator.child("Parser", mem.PAGE_SIZE * 3);
         errdefer self.arena.deinit();
 
-        self.lexer = try lexer.Lexer.new(input, self.arena);
-        errdefer self.lexer.deinit();
+        self.nodes = try collections.Vec(node.Node).new(5, self.arena);
+        errdefer self.nodes.deinit(self.arena);
 
-        self.checker = try checker.TypeChecker.new(self.arena);
-        errdefer self.checker.deinit();
+        self.rules = try collections.Vec(Rule).new(@typeInfo(RuleKind).@"enum".fields.len, self.arena);
+        errdefer self.rules.deinit(self.arena);
+
+        try RuleKind.init_buffer(&self.rules);
 
         return self;
     }
 
-    pub fn next(self: *Parser) bool {
-        if (self.lexer.match(token.Token.EOF)) {
-            return false;
+    pub fn next(self: *Parser, tokenizer: *lexer.Lexer) ?node.Node {
+        if (self.nodes.len > 0) {
+            const n = self.nodes.pop() catch @panic("TODO");
+            n.deinit(self.arena);
         }
 
-        self.lexer.advance();
+        const tok = tokenizer.next() orelse return null;
 
-        switch (self.lexer.previous) {
+        switch (tok) {
             .Keyword => |keyword| switch (keyword) {
                 .Procedure => self.procedure(),
                 .Type => self.typ(),
@@ -95,284 +142,298 @@ pub const Parser = struct {
             else => @panic("TODO: do not accept expressions here for now"),
         }
 
-        return true;
+        util.assert(self.nodes.len == 1);
+        return self.nodes.items[0];
     }
 
-    fn grouping(self: *Parser) void {
-        self.parse(.Assignment);
-        self.lexer.consume(token.Token.PARENTESISRIGHT);
+    fn group(self: *Parser, tokenizer: *lexer.Lexer) void {
+        self.parse(.Assignment, tokenizer);
+        if (!tokenizer.match(token.Token.PARENTESISRIGHT)) @panic("TODO");
     }
 
-    fn unary(self: *Parser) void {
-        const operator = self.lexer.previous.Operator;
-        self.parse(.Unary);
+    fn unary(self: *Parser, tokenizer: *lexer.Lexer) void {
+        const operator = tokenizer.previous.Operator;
+        self.parse(.Unary, tokenizer);
 
         switch (operator) {
-            .Bang => self.checker.push_unary(.Bang),
-            .Minus => self.checker.push_unary(.Minus),
+            .Bang => self.nodes.push(node.Node { .Unary = self.arena.create(node.Unary, node.Unary.new(self.nodes.pop() catch @panic("TODO"), .Bang)) catch @panic("TODO")}) catch @panic("TODO"),
+            .Minus => self.nodes.push(node.Node { .Unary = self.arena.create(node.Unary, node.Unary.new(self.nodes.pop() catch @panic("TODO"), .Negate)) catch @panic("TODO")}) catch @panic("TODO"),
             else => @panic("TODO"),
         }
     }
 
-    fn binary(self: *Parser) void {
-        const rule = Rule.from_token(self.lexer.previous);
-        const operator = self.lexer.previous.Operator;
+    fn binary(self: *Parser, tokenizer: *lexer.Lexer) void {
+        const operator = tokenizer.previous.Operator;
 
-        self.parse(@enumFromInt(@intFromEnum(rule.precedence) + 1));
+        self.parse(@enumFromInt(@intFromEnum(self.rules.items[RuleKind.from_token(tokenizer.previous)].precedence) + 1), tokenizer);
 
         switch (operator) {
             .BangEqual => {
-                self.checker.push_binary(.Eq);
-                self.checker.push_unary(.Bang);
+                const right = self.nodes.pop() catch @panic("TODO");
+                const left = self.nodes.pop() catch @panic("TODO");
+
+                const eq = node.Node{ .Binary = self.arena.create(node.Binary, node.Binary.new(left, right, .Eq)) catch @panic("TODO")};
+                self.nodes.push(node.Node { .Unary = self.arena.create(node.Unary, node.Unary.new(eq, .Bang)) catch @panic("TODO")}) catch @panic("TODO");
             },
             .GreaterEqual => {
-                self.checker.push_binary(.Lt);
-                self.checker.push_unary(.Bang);
+                const right = self.nodes.pop() catch @panic("TODO");
+                const left = self.nodes.pop() catch @panic("TODO");
+
+                const lt = node.Node{ .Binary = self.arena.create(node.Binary, node.Binary.new(left, right, .Lt)) catch @panic("TODO")};
+                self.nodes.push(node.Node { .Unary = self.arena.create(node.Unary, node.Unary.new(lt, .Bang)) catch @panic("TODO")}) catch @panic("TODO");
             },
             .LessEqual => {
-                self.checker.push_binary(.Gt);
-                self.checker.push_unary(.Bang);
+                const right = self.nodes.pop() catch @panic("TODO");
+                const left = self.nodes.pop() catch @panic("TODO");
+
+                const gt = node.Node{ .Binary = self.arena.create(node.Binary, node.Binary.new(left, right, .Gt)) catch @panic("TODO")};
+                self.nodes.push(node.Node { .Unary = self.arena.create(node.Unary, node.Unary.new(gt, .Bang)) catch @panic("TODO")}) catch @panic("TODO");
             },
-            .EqualEqual => self.checker.push_binary(.Eq),
-            .Greater => self.checker.push_binary(.Gt),
-            .Less => self.checker.push_binary(.Lt),
-            .Plus => self.checker.push_binary(.Add),
-            .Minus => self.checker.push_binary(.Sub),
-            .Star => self.checker.push_binary(.Mul),
-            .Slash => self.checker.push_binary(.Div),
+            .Minus => {
+                const right = node.Node { .Unary = self.arena.create(node.Unary, node.Unary.new(self.nodes.pop() catch @panic("TODO"), .Negate)) catch @panic("TODO")};
+                const left = self.nodes.pop() catch @panic("TODO");
+
+                self.nodes.push(node.Node { .Binary = self.arena.create(node.Binary, node.Binary.new(left, right, .Add)) catch @panic("TODO") }) catch @panic("TODO");
+            },
+            .EqualEqual => self.nodes.push(node.Node { .Binary = self.arena.create(node.Binary, node.Binary.new(self.nodes.pop() catch @panic("TODO"), self.nodes.pop() catch @panic("TODO"), .Eq)) catch @panic("TODO")}) catch @panic("TODO"),
+            .Greater => self.nodes.push(node.Node { .Binary = self.arena.create(node.Binary, node.Binary.new(self.nodes.pop() catch @panic("TODO"), self.nodes.pop() catch @panic("TODO"), .Gt)) catch @panic("TODO")}) catch @panic("TODO"),
+            .Less => self.nodes.push(node.Node { .Binary = self.arena.create(node.Binary, node.Binary.new(self.nodes.pop() catch @panic("TODO"), self.nodes.pop() catch @panic("TODO"), .Lt)) catch @panic("TODO")}) catch @panic("TODO"),
+            .Plus => self.nodes.push(node.Node { .Binary = self.arena.create(node.Binary, node.Binary.new(self.nodes.pop() catch @panic("TODO"), self.nodes.pop() catch @panic("TODO"), .Add)) catch @panic("TODO")}) catch @panic("TODO"),
+            .Star => self.nodes.push(node.Node { .Binary = self.arena.create(node.Binary, node.Binary.new(self.nodes.pop() catch @panic("TODO"), self.nodes.pop() catch @panic("TODO"), .Mul)) catch @panic("TODO")}) catch @panic("TODO"),
+            .Slash => self.nodes.push(node.Node { .Binary = self.arena.create(node.Binary, node.Binary.new(self.nodes.pop() catch @panic("TODO"), self.nodes.pop() catch @panic("TODO"), .Div)) catch @panic("TODO")}) catch @panic("TODO"),
             else => @panic("TODO"),
         }
     }
 
-    fn identifier(self: *Parser) void {
-        const name = self.lexer.previous.Identifier;
-        self.checker.names.push(name) catch @panic("TODO");
-
-        if (self.lexer.current.eql(token.Token.PARENTESISLEFT) or self.lexer.current.eql(token.Token.BRACELEFT)) {} else {
-            self.checker.push_identifier();
-        }
+    fn identifier(self: *Parser, tokenizer: *lexer.Lexer) void {
+        self.nodes.push(node.Node { .Identifier = tokenizer.previous.Identifier}) catch @panic("TODO");
     }
 
-    fn number(self: *Parser) void {
-        self.checker.push_number(self.lexer.previous.Number);
+    fn number(self: *Parser, tokenizer: *lexer.Lexer) void {
+        self.nodes.push(node.Node { .Number = tokenizer.previous.Number }) catch @panic("TODO");
     }
 
-    fn construct(self: *Parser) void {
-        var field_count: u32 = 0;
+    fn construct(self: *Parser, tokenizer: *lexer.Lexer) void {
+        var values = collections.Vec(node.Construct.Value).new(ARGUMENT_MAX, self.arena) catch @panic("TODO");
 
-        while (!self.lexer.match(token.Token.BRACERIGHT)) {
-            const name = self.lexer.current;
-
-            self.lexer.consume(token.Token.IDEN);
-            self.lexer.consume(token.Token.DOUBLECOLON);
-
-            self.parse(.Assignment);
-            self.lexer.consume(token.Token.COMMA);
-
-            self.checker.names.push(name.Identifier) catch @panic("TODO");
-            field_count += 1;
-        }
-
-        self.checker.push_construct(field_count);
-    }
-
-    fn call(self: *Parser) void {
-        var argument_count: u32 = 0;
-
-        while (!self.lexer.match(token.Token.PARENTESISRIGHT)) {
-            if (!self.lexer.match(token.Token.COMMA) and !self.lexer.previous.eql(token.Token.PARENTESISLEFT)) {
-                @panic("TODO: Show that user cannot place a comma at the start of the type constructor");
+        while (!tokenizer.match(token.Token.BRACERIGHT)) {
+            if (!tokenizer.match(token.Token.COMMA) and !tokenizer.previous.eql(token.Token.BRACELEFT)) {
+                @panic("Do not forget to separete arguments with comma");
             }
 
-            self.parse(.Assignment);
-            argument_count += 1;
+            const name = tokenizer.current;
+
+            if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
+            if (!tokenizer.match(token.Token.DOUBLECOLON)) @panic("TODO");
+
+            self.parse(.Assignment, tokenizer);
+
+            values.push(node.Construct.Value.new(name.Identifier, self.nodes.pop() catch @panic("TODO"))) catch @panic("TODO");
         }
 
-        self.checker.push_call(argument_count);
+        const name = self.nodes.pop() catch unreachable;
+
+        self.nodes.push(node.Node { .Construct = self.arena.create(node.Construct, node.Construct.new(name, values.array(self.arena))) catch @panic("TODO") }) catch @panic("TODO");
     }
 
-    fn typ(self: *Parser) void {
-        const name = self.lexer.current;
-        self.lexer.consume(token.Token.IDEN);
+    fn call(self: *Parser, tokenizer: *lexer.Lexer) void {
+        var arguments = collections.Vec(node.Node).new(ARGUMENT_MAX, self.arena) catch @panic("TODO");
 
-        var field_count: u32 = 0;
-        var size: u32 = 0;
+        while (!tokenizer.match(token.Token.PARENTESISRIGHT)) {
+            if (!tokenizer.match(token.Token.COMMA) and !tokenizer.previous.eql(token.Token.PARENTESISLEFT)) {
+                @panic("TODO: Show that user cannot place a comma at the start of the function call");
+            }
 
-        if (self.lexer.match(token.Token.BRACELEFT)) {
-            while (!self.lexer.match(token.Token.BRACERIGHT)) {
-                const field_name = self.lexer.current;
+            self.parse(.Assignment, tokenizer);
+            arguments.push(self.nodes.pop() catch @panic("TODO")) catch @panic("TODO");
+        }
 
-                self.lexer.consume(token.Token.IDEN);
-                self.lexer.consume(token.Token.DOUBLECOLON);
+        const name = self.nodes.pop() catch @panic("TODO");
 
-                const field_type = self.lexer.current;
+        self.nodes.push(node.Node {.Call = self.arena.create(node.Call, node.Call.new(name, arguments.array(self.arena))) catch @panic("TODO")}) catch @panic("TODO");
+    }
 
-                self.lexer.consume(token.Token.IDEN);
-                self.lexer.consume(token.Token.COMMA);
-                self.checker.names.extend(&.{ field_name.Identifier, field_type.Identifier }) catch @panic("TODO");
+    fn typ(self: *Parser, tokenizer: *lexer.Lexer) void {
+        const name = tokenizer.current;
+        if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
 
-                field_count += 1;
+        var fields = collections.Vec(node.Type.Field).new(ARGUMENT_MAX, self.arena);
+        var size: ?u32 = null;
+
+        if (tokenizer.match(token.Token.BRACELEFT)) {
+            while (!tokenizer.match(token.Token.BRACERIGHT)) {
+                const field_name = tokenizer.current;
+
+                if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
+                if (!tokenizer.match(token.Token.DOUBLECOLON)) @panic("TODO");
+
+                const field_type = tokenizer.current;
+
+                if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
+                if (!tokenizer.match(token.Token.COMMA)) @panic("TODO");
+
+                fields.push(node.Type.Field.new(field_name.Identifier, field_type.Identifier)) catch @panic("TODO");
             }
         } else {
-            self.lexer.consume(token.Token.EQUAL);
-            const type_size = self.lexer.current;
+            if (!tokenizer.match(token.Token.EQUAL)) @panic("TODO");
+            const type_size = tokenizer.current;
 
-            self.lexer.consume(token.Token.NUMBER);
-            self.lexer.consume(token.Token.SEMICOLON);
+            if (!tokenizer.match(token.Token.NUMBER)) @panic("TODO");
+            if (!tokenizer.match(token.Token.SEMICOLON)) @panic("TODO");
 
-            size += @intCast(util.parse(type_size.Number));
+            size = type_size.Number;
         }
 
-        self.checker.names.push(name.Identifier) catch @panic("TODO");
-        self.checker.push_type(field_count, size);
+        self.nodes.push(node.Node { .Type = self.arena.create(node.Type, node.Type.new(name.Identifier, fields.array(self.arena, size)) catch @panic("TODO"))}) catch @panic("TODO");
     }
 
-    fn property(self: *Parser) void {
-        const name = self.lexer.current;
+    fn property(self: *Parser, tokenizer: *lexer.Lexer) void {
+        const name = tokenizer.current;
+        if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
 
-        self.lexer.consume(token.Token.IDEN);
-        self.checker.push_property(name.Identifier);
+        const n = self.nodes.pop() catch @panic("TODO");
+
+        self.nodes.push(node.Node { .Property = self.arena.create(node.Property, node.Property.new(n, name.Identifier)) catch @panic("TODO")}) catch @panic("TODO");
     }
 
-    fn procedure(self: *Parser) void {
-        const name = self.lexer.current;
+    fn procedure(self: *Parser, tokenizer: *lexer.Lexer) void {
+        const name = tokenizer.current;
 
-        self.lexer.consume(token.Token.IDEN);
-        self.lexer.consume(token.Token.PARENTESISLEFT);
+        if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
+        if (!tokenizer.match(token.Token.PARENTESISLEFT)) @panic("TODO");
 
-        var parameters_size: u32 = 0;
-        var parameter_count: u32 = 0;
-        const variable_count: u32 = self.checker.variable_constants.len;
+        var parameters = collections.Vec(node.Procedure.Parameter).new(ARGUMENT_MAX, self.arena) catch @panic("TODO");
 
-        while (!self.lexer.match(token.Token.PARENTESISRIGHT)) {
-            if (!self.lexer.match(token.Token.COMMA) and !self.lexer.previous.eql(token.Token.PARENTESISLEFT)) {
+        while (!tokenizer.match(token.Token.PARENTESISRIGHT)) {
+            if (!tokenizer.match(token.Token.COMMA) and !tokenizer.previous.eql(token.Token.PARENTESISLEFT)) {
                 @panic("TODO: Parameters should start with parentesis and the first element is a identifier");
             }
 
-            const param = self.lexer.current;
+            const param = tokenizer.current;
 
-            self.lexer.consume(token.Token.IDEN);
-            self.lexer.consume(token.Token.DOUBLECOLON);
+            if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
+            if (!tokenizer.match(token.Token.DOUBLECOLON)) @panic("TODO");
 
-            const kind = self.lexer.current;
+            const kind = tokenizer.current;
 
-            self.lexer.consume(token.Token.IDEN);
-            self.checker.names.extend(&.{ param.Identifier, kind.Identifier }) catch @panic("TODO");
+            if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
 
-            parameters_size += self.checker.push_parameter(parameters_size);
-            parameter_count += 1;
+            parameters.push(node.Procedure.Parameter.new(param.Identifier, kind.Identifier)) catch @panic("TODO");
         }
 
-        self.lexer.consume(token.Token.DOUBLECOLON);
+        if (!tokenizer.match(token.Token.DOUBLECOLON)) @panic("TODO");
 
-        const return_type = self.lexer.current;
+        const return_type = tokenizer.current;
 
-        self.lexer.consume(token.Token.IDEN);
-        self.lexer.consume(token.Token.BRACELEFT);
-        self.scope();
+        if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
+        if (!tokenizer.match(token.Token.BRACELEFT)) @panic("TODO");
 
-        self.checker.names.extend(&.{ name.Identifier, return_type.Identifier }) catch @panic("TODO");
-        self.checker.push_procedure(parameter_count, variable_count);
+        self.scope(tokenizer);
+
+        const scp = self.nodes.pop() catch @panic("TODO");
+
+        self.nodes.push(node.Node { .Procedure = self.arena.create(node.Procedure, node.Procedure.new(name.Identifier, return_type.Identifier, parameters.array(self.arena), scp)) catch @panic("TODO")}) catch @panic("TODO");
     }
 
-    fn let(self: *Parser) void {
-        const mutable = self.lexer.match(token.Token.MUT);
-        const iden = self.lexer.current;
+    fn let(self: *Parser, tokenizer: *lexer.Lexer) void {
+        const iden = tokenizer.current;
+        const mutable = tokenizer.match(token.Token.MUT);
 
-        _ = mutable;
+        if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
+        if (!tokenizer.match(token.Token.DOUBLECOLON)) @panic("TODO");
 
-        self.lexer.consume(token.Token.IDEN);
-        self.lexer.consume(token.Token.DOUBLECOLON);
+        const kind = tokenizer.current;
 
-        const kind = self.lexer.current;
+        if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
+        if (!tokenizer.match(token.Token.EQUAL)) @panic("TODO");
 
-        self.lexer.consume(token.Token.IDEN);
-        self.lexer.consume(token.Token.EQUAL);
+        self.parse(.Assignment, tokenizer);
 
-        self.parse(.Assignment);
+        if (!tokenizer.match(token.Token.SEMICOLON)) @panic("TODO");
 
-        self.lexer.consume(token.Token.SEMICOLON);
-        self.checker.names.extend(&.{ iden.Identifier, kind.Identifier }) catch @panic("TODO");
-        self.checker.push_let();
+        const value = self.nodes.pop() catch @panic("TODO");
+
+        self.nodes.push(node.Node {.Let = self.arena.create(node.Let, node.Let.new(iden.Identifier, kind.Identifier, value, mutable)) catch @panic("TODO")}) catch @panic("TODO");
     }
 
-    fn string(self: *Parser) void {
+    fn string(self: *Parser, tokenizer: *lexer.Lexer) void {
+        _ = tokenizer;
         _ = self;
         @panic("TODO");
     }
 
-    fn scope(self: *Parser) void {
-        var expression_count: u32 = 0;
-        var declaration_count: u32 = 0;
-        var has_return = false;
+    fn scope(self: *Parser, tokenizer: *lexer.Lexer) void {
+        var value: ?node.Node = null;
+        var nodes = collections.Vec(node.Node).new(ARGUMENT_MAX, self.arena) catch @panic("TODO");
 
-        while (!self.lexer.match(token.Token.BRACERIGHT)) {
-            switch (self.lexer.current) {
+        while (!tokenizer.match(token.Token.BRACERIGHT)) {
+            switch (tokenizer.current) {
                 .Keyword => |keyword| switch (keyword) {
                     .Let => {
-                        self.lexer.advance();
-                        self.let();
-                        declaration_count += 1;
+                        tokenizer.advance();
+                        self.let(tokenizer);
                     },
                     else => @panic("TODO"),
                 },
 
                 else => {
-                    self.parse(.Assignment);
+                    self.parse(.Assignment, tokenizer);
 
-                    if (!self.lexer.previous.eql(token.Token.SEMICOLON)) {
-                        if (self.lexer.match(token.Token.BRACERIGHT)) {
-                            has_return = true;
+                    if (!tokenizer.previous.eql(token.Token.SEMICOLON)) {
+                        if (tokenizer.match(token.Token.BRACERIGHT)) {
+                            value = self.nodes.pop() catch @panic("TODO");
 
                             break;
                         }
                     }
-
-                    expression_count += 1;
                 },
             }
+
+            nodes.push(self.nodes.pop() catch @panic("TODO")) catch @panic("TODO");
         }
 
-        self.checker.push_scope(expression_count, declaration_count, has_return);
+        self.nodes.push(node.Node {.Scope = self.arena.create(node.Scope, node.Scope.new(nodes.array(self.arena), value)) catch @panic("TODO")}) catch @panic("TODO");
     }
 
-    fn parse(self: *Parser, precedence: Precedence) void {
-        self.lexer.advance();
+    fn parse(self: *Parser, precedence: Precedence, tokenizer: *lexer.Lexer) void {
+        tokenizer.advance();
 
-        if (Rule.from_token(self.lexer.previous).prefix) |prefix| {
-            prefix(self);
+        if (self.rules.items[RuleKind.from_token(tokenizer.previous)].prefix) |prefix| {
+            prefix(self, tokenizer);
         } else {
             @panic("TODO: Show error");
         }
 
-        var rule = Rule.from_token(self.lexer.current);
+        var r = self.rules.items[RuleKind.from_token(tokenizer.current)];
 
-        while (@intFromEnum(precedence) <= @intFromEnum(rule.precedence)) {
-            if (rule.infix) |infix| {
-                self.lexer.advance();
-                infix(self);
+        while (@intFromEnum(precedence) <= @intFromEnum(r.precedence)) {
+            if (r.infix) |infix| {
+                tokenizer.advance();
+                infix(self, tokenizer);
             } else {
                 break;
             }
 
-            rule = Rule.from_token(self.lexer.current);
+            r = self.rules.items[RuleKind.from_token(tokenizer.current)];
         }
     }
 
-    pub fn compile(self: *Parser, stream: collections.Stream) void {
-        self.checker.generate(stream);
+    pub fn compile(self: *Parser, stream: collections.Stream(u8)) void {
+        _ = self;
+        _ = stream;
+        // self.checker.generate(stream);
     }
 
     pub fn deinit(self: *Parser) void {
-        self.lexer.deinit();
-        self.checker.deinit();
+        self.rules.deinit(self.arena);
+        self.nodes.deinit(self.arena);
         self.arena.deinit();
     }
 };
 
-test "Lexer" {
-    _ = lexer;
-}
+// test "Lexer" {
+//     _ = lexer;
+// }
 
 // test "basic" {
 //     var arena = try mem.Arena.new("Testing", 3);

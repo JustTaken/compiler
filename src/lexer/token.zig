@@ -108,7 +108,7 @@ const TokenKind = enum {
 pub const Token = union(TokenKind) {
     Identifier: []const u8,
     String: []const u8,
-    Number: []const u8,
+    Number: usize,
     Keyword: Keyword,
     Operator: Operator,
     Symbol: Symbol,
@@ -116,7 +116,7 @@ pub const Token = union(TokenKind) {
     Eof,
 
     pub const IDEN: Token = Token{ .Identifier = "" };
-    pub const NUMBER: Token = Token{ .Number = "" };
+    pub const NUMBER: Token = Token{ .Number = 0 };
     pub const PARENTESISLEFT: Token = Token{ .Symbol = Symbol.ParentesisLeft };
     pub const PARENTESISRIGHT: Token = Token{ .Symbol = Symbol.ParentesisRight };
     pub const COMMA: Token = Token{ .Symbol = Symbol.Comma };

@@ -3,6 +3,7 @@ const mem = @import("mem");
 const collections = @import("collections");
 
 const Parser = @import("parser.zig").Parser;
+const Lexer = @import("lexer/mod.zig").Lexer;
 
 const DEFAULT_PATH: [:0]const u8 = "a.out";
 
@@ -27,15 +28,18 @@ pub fn start() !void {
     var input_file = try collections.File.open(input);
     defer input_file.close();
 
-    var parser = try Parser.new(input_file.stream(), &arena);
+    var lexer = try Lexer.new(input_file.stream(), &arena);
+    defer lexer.deinit();
+
+    var parser = try Parser.new(&arena);
     defer parser.deinit();
 
-    while (parser.next()) {}
+    // while (parser.next()) {}
 
     var output_file = try collections.File.create(output);
     defer output_file.close();
 
-    parser.compile(output_file.stream());
+    // parser.compile(output_file.stream());
 }
 
 test "main test" {

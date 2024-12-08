@@ -2,19 +2,19 @@ const collections = @import("collections");
 const mem = @import("mem");
 const util = @import("util");
 const constant = @import("constant.zig");
-const generator = @import("generator.zig");
+// const generator = @import("generator.zig");
 
 pub const TypeChecker = struct {
-    parameters: collections.Vec(*const constant.ConstantType),
-    constants: collections.Vec(constant.Constant),
+    // parameters: collections.Vec(*const constant.ConstantType),
+    // constants: collections.Vec(constant.Constant),
 
-    names: collections.Vec([]const u8),
+    // names: collections.Vec([]const u8),
 
-    variables: collections.StringMap(*constant.Constant),
-    variable_constants: collections.Vec(constant.Constant),
-    variable_refs: collections.Vec(*[]const u8),
+    // variables: collections.StringMap(*constant.Constant),
+    // variable_constants: collections.Vec(constant.Constant),
+    // variable_refs: collections.Vec(*[]const u8),
 
-    generator: generator.Generator,
+    // generator: generator.Generator,
     arena: *mem.Arena,
 
     const VARIABLE_MAX: u32 = 20;
@@ -22,29 +22,29 @@ pub const TypeChecker = struct {
     pub fn new(allocator: *mem.Arena) error{OutOfMemory}!TypeChecker {
         var self: TypeChecker = undefined;
 
-        self.arena = try allocator.child("TypeChecker", mem.PAGE_SIZE * 2 + (mem.PAGE_SIZE >> 1) - 2 * @sizeOf(mem.Arena));
+        self.arena = try allocator.child("TypeChecker", mem.PAGE_SIZE * 2);
         errdefer self.arena.deinit();
 
-        self.parameters = try collections.Vec(*const constant.ConstantType).new(VARIABLE_MAX, self.arena);
-        errdefer self.parameters.deinit(self.arena);
+        // self.parameters = try collections.Vec(*const constant.ConstantType).new(VARIABLE_MAX, self.arena);
+        // errdefer self.parameters.deinit(self.arena);
 
-        self.constants = try collections.Vec(constant.Constant).new(VARIABLE_MAX, self.arena);
-        errdefer self.constants.deinit(self.arena);
+        // self.constants = try collections.Vec(constant.Constant).new(VARIABLE_MAX, self.arena);
+        // errdefer self.constants.deinit(self.arena);
 
-        self.variables = try collections.StringMap(*constant.Constant).new(VARIABLE_MAX, self.arena);
-        errdefer self.variables.deinit(self.arena);
+        // self.variables = try collections.StringMap(*constant.Constant).new(VARIABLE_MAX, self.arena);
+        // errdefer self.variables.deinit(self.arena);
 
-        self.variable_constants = try collections.Vec(constant.Constant).new(VARIABLE_MAX, self.arena);
-        errdefer self.variable_constants.deinit(self.arena);
+        // self.variable_constants = try collections.Vec(constant.Constant).new(VARIABLE_MAX, self.arena);
+        // errdefer self.variable_constants.deinit(self.arena);
 
-        self.variable_refs = try collections.Vec(*[]const u8).new(VARIABLE_MAX, self.arena);
-        errdefer self.variable_refs.deinit(self.arena);
+        // self.variable_refs = try collections.Vec(*[]const u8).new(VARIABLE_MAX, self.arena);
+        // errdefer self.variable_refs.deinit(self.arena);
 
-        self.names = try collections.Vec([]const u8).new(VARIABLE_MAX, self.arena);
-        errdefer self.names.deinit(self.arena);
+        // self.names = try collections.Vec([]const u8).new(VARIABLE_MAX, self.arena);
+        // errdefer self.names.deinit(self.arena);
 
-        self.generator = try generator.Generator.new(self.arena);
-        errdefer self.generator.deinit();
+        // self.generator = try generator.Generator.new(self.arena);
+        // errdefer self.generator.deinit();
 
         return self;
     }
@@ -372,7 +372,7 @@ pub const TypeChecker = struct {
         return cons.Procedure;
     }
 
-    pub fn generate(self: *TypeChecker, stream: collections.Stream) void {
+    pub fn generate(self: *TypeChecker, stream: collections.Stream(u8)) void {
         const main_procedure = self.get_procedure("main");
         if (main_procedure.inner.size != 4) @panic("TODO: treat main procedure mismatch return type");
 
@@ -380,19 +380,19 @@ pub const TypeChecker = struct {
     }
 
     pub fn deinit(self: *TypeChecker) void {
-        for (self.variable_constants.offset(0) catch unreachable) |variable| {
-            variable.deinit(self.arena);
-        }
+        // for (self.variable_constants.offset(0) catch unreachable) |variable| {
+        //     variable.deinit(self.arena);
+        // }
 
-        self.generator.deinit();
+        // self.generator.deinit();
 
-        self.parameters.deinit(self.arena);
-        self.constants.deinit(self.arena);
-        self.variables.deinit(self.arena);
+        // self.parameters.deinit(self.arena);
+        // self.constants.deinit(self.arena);
+        // self.variables.deinit(self.arena);
 
-        self.variable_constants.deinit(self.arena);
-        self.variable_refs.deinit(self.arena);
-        self.names.deinit(self.arena);
+        // self.variable_constants.deinit(self.arena);
+        // self.variable_refs.deinit(self.arena);
+        // self.names.deinit(self.arena);
 
         self.arena.deinit();
     }

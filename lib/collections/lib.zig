@@ -2,8 +2,6 @@ const mem = @import("mem");
 const util = @import("util");
 const std = @import("std");
 
-const Arena = mem.Arena;
-const Range = util.Range;
 pub const String = Vec(u8);
 
 pub const File = struct {
@@ -28,7 +26,7 @@ pub const File = struct {
     pub fn read(payload: *anyopaque, buffer: *String) error{ AtEnd, OutOfBounds }!void {
         const self: *File = @ptrCast(@alignCast(payload));
         const buffer_len = buffer.len;
-        const len: u32 = @intCast(self.handle.read(buffer.buffer()) catch return error.AtEnd);
+        const len: u32 = @intCast(self.handle.read(buffer.free_space()) catch return error.AtEnd);
 
         if (len == 0) {
             return error.AtEnd;
@@ -48,8 +46,8 @@ pub const File = struct {
         self.handle.close();
     }
 
-    pub fn stream(self: *File) Stream {
-        return Stream{
+    pub fn stream(self: *File) Stream(u8) {
+        return Stream(u8) {
             .payload = self,
             .read_fn = read,
             .write_fn = write,
@@ -57,45 +55,23 @@ pub const File = struct {
     }
 };
 
-pub fn string_from_buffer(buffer: []u8) String {
-    return String{
-        .items = buffer.ptr,
-        .len = 0,
-        .capacity = @intCast(buffer.len),
+pub fn Stream(T: type) type {
+    return struct {
+        payload: *anyopaque,
+        read_fn: *const fn (ptr: *anyopaque, buffer: *Vec(T)) error{ AtEnd, OutOfBounds }!void,
+        write_fn: *const fn (ptr: *anyopaque, buffer: Vec(T)) error{Fail}!void,
+
+        const Self = @This();
+
+        pub fn read(self: *const Self, buffer: *Vec(T)) error{ AtEnd, OutOfBounds }!void {
+            try self.read_fn(self.payload, buffer);
+        }
+
+        pub fn write(self: *const Self, buffer: String) error{Fail}!void {
+            try self.write_fn(self.payload, buffer);
+        }
     };
 }
-
-pub fn read_string(ptr: *anyopaque, buffer: *String) error{ AtEnd, OutOfBounds }!void {
-    const self: *String = @ptrCast(@alignCast(ptr));
-    try buffer.extend(self.offset(0) catch unreachable);
-}
-
-pub fn write_string(ptr: *anyopaque, buffer: String) error{Fail}!void {
-    const self: *String = @ptrCast(@alignCast(ptr));
-    self.extend(buffer.offset(0) catch unreachable) catch return error.Fail;
-}
-
-pub fn string_stream(string: *String) Stream {
-    return Stream{
-        .payload = @ptrCast(string),
-        .read_fn = read_string,
-        .write_fn = write_string,
-    };
-}
-
-pub const Stream = struct {
-    payload: *anyopaque,
-    read_fn: *const fn (ptr: *anyopaque, buffer: *String) error{ AtEnd, OutOfBounds }!void,
-    write_fn: *const fn (ptr: *anyopaque, buffer: String) error{Fail}!void,
-
-    pub fn read(self: *const Stream, buffer: *String) error{ AtEnd, OutOfBounds }!void {
-        try self.read_fn(self.payload, buffer);
-    }
-
-    pub fn write(self: *const Stream, buffer: String) error{Fail}!void {
-        try self.write_fn(self.payload, buffer);
-    }
-};
 
 pub fn Array(T: type) type {
     return struct {
@@ -104,7 +80,7 @@ pub fn Array(T: type) type {
 
         const Self = @This();
 
-        pub fn new(len: u32, arena: *Arena) error{OutOfMemory}!Self {
+        pub fn new(len: u32, arena: *mem.Arena) error{OutOfMemory}!Self {
             return Self{
                 .items = try arena.alloc(T, len),
                 .len = len,
@@ -117,13 +93,19 @@ pub fn Array(T: type) type {
             self.items[pos] = item;
         }
 
+        pub fn set_back(self: *Self, item: T, pos: usize) error{OutOfBounds}!void {
+            if (pos >= self.len) return error.OutOfBounds;
+
+            self.items[self.len - pos - 1] = item;
+        }
+
         pub fn offset(self: *const Self, o: usize) error{OutOfBounds}![]const T {
             if (o > self.len) return error.OutOfBounds;
 
             return self.items[o..self.len];
         }
 
-        pub fn range(self: *const Self, r: Range) error{OutOfBounds}![]const T {
+        pub fn range(self: *const Self, r: util.Range) error{OutOfBounds}![]const T {
             if (r.end > self.len) return error.OutOfBounds;
             if (r.start > r.end) return error.OutOfBounds;
 
@@ -136,7 +118,7 @@ pub fn Array(T: type) type {
             return self.items[self.len - o - 1];
         }
 
-        pub fn deinit(self: *Self, arena: *Arena) void {
+        pub fn deinit(self: *Self, arena: *mem.Arena) void {
             defer self.len = 0;
             arena.destroy(T, self.len);
         }
@@ -151,11 +133,19 @@ pub fn Vec(T: type) type {
 
         const Self = @This();
 
-        pub fn new(size: u32, arena: *Arena) error{OutOfMemory}!Self {
+        pub fn new(size: u32, arena: *mem.Arena) error{OutOfMemory}!Self {
             return Self{
                 .items = try arena.alloc(T, size),
                 .capacity = size,
                 .len = 0,
+            };
+        }
+
+        pub fn from_buffer(buffer: []T) Self {
+            return String{
+                .items = buffer.ptr,
+                .len = 0,
+                .capacity = @intCast(buffer.len),
             };
         }
 
@@ -202,12 +192,30 @@ pub fn Vec(T: type) type {
             }
         }
 
-        pub fn extend_range(self: *Self, items: []const T) error{OutOfBounds}!Range {
+        pub fn extend_range(self: *Self, items: []const T) error{OutOfBounds}!util.Range {
             const start = self.len;
 
             try self.extend(items);
 
-            return Range.new(start, self.len);
+            return util.Range.new(start, self.len);
+        }
+
+        pub fn read(ptr: *anyopaque, buffer: *Self) error{ AtEnd, OutOfBounds }!void {
+            const self: *Self = @ptrCast(@alignCast(ptr));
+            try buffer.extend(self.offset(0) catch unreachable);
+        }
+
+        pub fn write(ptr: *anyopaque, buffer: Self) error{Fail}!void {
+            const self: *Self = @ptrCast(@alignCast(ptr));
+            self.extend(buffer.offset(0) catch unreachable) catch return error.Fail;
+        }
+
+        pub fn stream(self: *Self) Stream(T) {
+            return Stream{
+                .payload = self,
+                .read_fn = read,
+                .write_fn = write,
+            };
         }
 
         pub fn get(self: *const Self, index: u32) error{OutOfBounds}!*T {
@@ -239,20 +247,32 @@ pub fn Vec(T: type) type {
             return self.items[self.len - index - 1];
         }
 
-        pub fn buffer(self: *const Self) []T {
+        pub fn free_space(self: *const Self) []T {
             return self.items[self.len..self.capacity];
         }
 
-        pub fn range(self: *const Self, r: Range) error{OutOfBounds}![]const T {
+        pub fn range(self: *const Self, r: util.Range) error{OutOfBounds}![]const T {
             if (r.start > r.end or r.end > self.len) return error.OutOfBounds;
 
             return self.items[r.start..r.end];
         }
 
-        pub fn mut_range(self: *Self, r: Range) error{OutOfBounds}![]T {
+        pub fn mut_range(self: *Self, r: util.Range) error{OutOfBounds}![]T {
             if (r.start > r.end or r.end > self.len) return error.OutOfBounds;
 
             return self.items[r.start..r.end];
+        }
+
+        pub fn array(self: *Self, arena: *mem.Arena) Array(T) {
+            const total_length = mem.align_with(@sizeOf(T) * self.capacity, mem.BASE_SIZE);
+            const length = mem.align_with(@sizeOf(T) * self.len, mem.BASE_SIZE);
+
+            arena.usage -= @intCast(total_length - length);
+
+            return Array(T) {
+                .items = self.items,
+                .len = self.len,
+            };
         }
 
         pub fn set_len(self: *Self, len: u32) error{OutOfBounds}!void {
@@ -270,7 +290,7 @@ pub fn Vec(T: type) type {
             self.len = 0;
         }
 
-        pub fn deinit(self: *Self, arena: *Arena) void {
+        pub fn deinit(self: *Self, arena: *mem.Arena) void {
             defer {
                 self.clear();
                 self.capacity = 0;
@@ -289,7 +309,7 @@ pub fn StringMap(T: type) type {
 
         const Self = @This();
 
-        pub fn new(size: u32, arena: *Arena) error{OutOfMemory}!Self {
+        pub fn new(size: u32, arena: *mem.Arena) error{OutOfMemory}!Self {
             const key = try arena.alloc([]const u8, size);
             const value = try arena.alloc(T, size);
 
@@ -351,7 +371,7 @@ pub fn StringMap(T: type) type {
             return null;
         }
 
-        pub fn deinit(self: *Self, arena: *Arena) void {
+        pub fn deinit(self: *Self, arena: *mem.Arena) void {
             defer self.capacity = 0;
 
             arena.destroy(T, self.capacity);
@@ -361,6 +381,38 @@ pub fn StringMap(T: type) type {
 }
 
 pub fn Iter(T: type) type {
+    return struct {
+        payload: *anyopaque,
+        next_fn: *const fn (ptr: *anyopaque) ?T,
+        prev_fn: *const fn (ptr: *anyopaque) T,
+        current_fn: *const fn (ptr: *anyopaque) T,
+        match_fn: *const fn (ptr: *anyopaque, item: T) bool,
+
+        const Self = @This();
+
+        pub fn next(self: *const Self) ?T {
+            return self.next_fn(self.payload);
+        }
+
+        pub fn current(self: *const Self) T {
+            return self.current_fn(self.payload);
+        }
+
+        pub fn match(self: *const Self, item: T) bool {
+            return self.match_fn(self.payload, item);
+        }
+
+        pub fn prev(self: *const Self) T {
+            return self.prev_fn(self.payload);
+        }
+
+        // pub fn consume(self: *const Self, item: T) error{False}!void {
+            // try self.consume_fn(item);
+        // }
+    };
+}
+
+pub fn ComptimeIter(T: type) type {
     return struct {
         items: [*]const T,
         len: u32,

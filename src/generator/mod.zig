@@ -2,7 +2,7 @@ const collections = @import("collections");
 const mem = @import("mem");
 const util = @import("util");
 const elf = @import("elf.zig");
-const constant = @import("constant.zig");
+// const constant = @import("constant.zig");
 
 const BASE_SIZE: u32 = 4;
 
@@ -317,136 +317,136 @@ pub const Generator = struct {
     code: collections.String,
     data: collections.String,
     operations: collections.Vec(Operation),
-    manager: Manager,
+    // manager: Manager,
 
     arena: *mem.Arena,
 
-    pub const Error = error{
-        OutOfRegisters,
-        SourceNotBeingUsed,
-    };
+    // pub const Error = error{
+    //     OutOfRegisters,
+    //     SourceNotBeingUsed,
+    // };
 
-    const Manager = struct {
-        free: collections.Vec(Register),
-        resources: collections.Vec(Resource),
-        stack: usize,
+    // const Manager = struct {
+    //     free: collections.Vec(Register),
+    //     resources: collections.Vec(Resource),
+    //     stack: usize,
 
-        pub const Resource = struct {
-            variant: Variant,
-            ptr: *const constant.Constant,
+    //     pub const Resource = struct {
+    //         variant: Variant,
+    //         ptr: *const constant.Constant,
 
-            const Kind = enum {
-                Register,
-                Memory,
-            };
+    //         const Kind = enum {
+    //             Register,
+    //             Memory,
+    //         };
 
-            const Variant = union(Kind) {
-                Register: Register,
-                Memory: Memory,
-            };
+    //         const Variant = union(Kind) {
+    //             Register: Register,
+    //             Memory: Memory,
+    //         };
 
-            fn as_destination(self: Resource) Destination {
-                return switch (self.variant) {
-                    .Register => |register| Destination{ .Register = register },
-                    .Memory => |memory| Destination{
-                        .Memory = memory,
-                    },
-                };
-            }
-        };
+    //         fn as_destination(self: Resource) Destination {
+    //             return switch (self.variant) {
+    //                 .Register => |register| Destination{ .Register = register },
+    //                 .Memory => |memory| Destination{
+    //                     .Memory = memory,
+    //                 },
+    //             };
+    //         }
+    //     };
 
-        fn new(arena: *mem.Arena) error{OutOfMemory}!Manager {
-            const usable_registers = &.{
-                Register.Rcx, Register.Rdi, Register.Rdx, Register.Rbx, Register.Rax,
-            };
+    //     fn new(arena: *mem.Arena) error{OutOfMemory}!Manager {
+    //         const usable_registers = &.{
+    //             Register.Rcx, Register.Rdi, Register.Rdx, Register.Rbx, Register.Rax,
+    //         };
 
-            var resources = try collections.Vec(Resource).new(usable_registers.len, arena);
-            errdefer resources.deinit(arena);
+    //         var resources = try collections.Vec(Resource).new(usable_registers.len, arena);
+    //         errdefer resources.deinit(arena);
 
-            var free = try collections.Vec(Register).new(usable_registers.len, arena);
-            errdefer free.deinit(arena);
+    //         var free = try collections.Vec(Register).new(usable_registers.len, arena);
+    //         errdefer free.deinit(arena);
 
-            free.extend(usable_registers) catch unreachable;
+    //         free.extend(usable_registers) catch unreachable;
 
-            return Manager{
-                .resources = resources,
-                .free = free,
-                .stack = 0,
-            };
-        }
+    //         return Manager{
+    //             .resources = resources,
+    //             .free = free,
+    //             .stack = 0,
+    //         };
+    //     }
 
-        fn increase(self: *Manager, size: usize) void {
-            self.stack += size;
-        }
+    //     fn increase(self: *Manager, size: usize) void {
+    //         self.stack += size;
+    //     }
 
-        fn get(self: *Manager, cons: *const constant.Constant) Destination {
-            const inner = cons.get_type().?;
+    //     fn get(self: *Manager, cons: *const constant.Constant) Destination {
+    //         const inner = cons.get_type().?;
 
-            const resource = blk: {
-                if (inner.size > BASE_SIZE) {
-                    const offset = self.stack;
+    //         const resource = blk: {
+    //             if (inner.size > BASE_SIZE) {
+    //                 const offset = self.stack;
 
-                    self.increase(inner.size);
+    //                 self.increase(inner.size);
 
-                    break :blk Resource{
-                        .ptr = cons,
-                        .variant = Resource.Variant{
-                            .Memory = Memory{
-                                .register = Register.Rsp,
-                                .offset = offset,
-                            },
-                        },
-                    };
-                } else {
-                    const register = self.free.pop() catch @panic("TODO");
+    //                 break :blk Resource{
+    //                     .ptr = cons,
+    //                     .variant = Resource.Variant{
+    //                         .Memory = Memory{
+    //                             .register = Register.Rsp,
+    //                             .offset = offset,
+    //                         },
+    //                     },
+    //                 };
+    //             } else {
+    //                 const register = self.free.pop() catch @panic("TODO");
 
-                    break :blk Resource{
-                        .ptr = cons,
-                        .variant = Resource.Variant{
-                            .Register = register,
-                        },
-                    };
-                }
-            };
+    //                 break :blk Resource{
+    //                     .ptr = cons,
+    //                     .variant = Resource.Variant{
+    //                         .Register = register,
+    //                     },
+    //                 };
+    //             }
+    //         };
 
-            self.resources.push(resource) catch @panic("TODO");
+    //         self.resources.push(resource) catch @panic("TODO");
 
-            return resource.as_destination();
-        }
+    //         return resource.as_destination();
+    //     }
 
-        fn get_registry(self: Manager, cons: *const constant.Constant) ?Destination {
-            for (self.resources.offset(0) catch unreachable) |resource| {
-                if (resource.ptr == cons) return resource.as_destination();
-            }
+    //     fn get_registry(self: Manager, cons: *const constant.Constant) ?Destination {
+    //         for (self.resources.offset(0) catch unreachable) |resource| {
+    //             if (resource.ptr == cons) return resource.as_destination();
+    //         }
 
-            return null;
-        }
+    //         return null;
+    //     }
 
-        fn is_used(self: Manager, register: Register) bool {
-            for (self.free.offset(0) catch unreachable) |r| {
-                if (r == register) return false;
-            }
+    //     fn is_used(self: Manager, register: Register) bool {
+    //         for (self.free.offset(0) catch unreachable) |r| {
+    //             if (r == register) return false;
+    //         }
 
-            return true;
-        }
+    //         return true;
+    //     }
 
-        fn clear(self: *Manager) void {
-            self.resources.clear();
-        }
+    //     fn clear(self: *Manager) void {
+    //         self.resources.clear();
+    //     }
 
-        fn deinit(self: *Manager, arena: *mem.Arena) void {
-            self.free.deinit(arena);
-            self.resources.deinit(arena);
-        }
-    };
+    //     fn deinit(self: *Manager, arena: *mem.Arena) void {
+    //         self.free.deinit(arena);
+    //         self.resources.deinit(arena);
+    //     }
+    // };
 
     pub fn new(allocator: *mem.Arena) error{OutOfMemory}!Generator {
         var self: Generator = undefined;
 
-        self.arena = try allocator.child("Generator", mem.PAGE_SIZE >> 1);
+        self.arena = try allocator.child("Generator", mem.PAGE_SIZE);
         errdefer self.arena.deinit();
 
-        self.code = try collections.String.new(512, self.arena);
+        self.code = try collections.String.new(mem.PAGE_SIZE >> 1, self.arena);
         errdefer self.code.deinit(self.arena);
 
         self.data = try collections.String.new(1, self.arena);
@@ -455,256 +455,256 @@ pub const Generator = struct {
         self.operations = try collections.Vec(Operation).new(16, self.arena);
         errdefer self.operations.deinit(self.arena);
 
-        self.manager = try Manager.new(self.arena);
-        errdefer self.manager.deinit(self.arena);
+        // self.manager = try Manager.new(self.arena);
+        // errdefer self.manager.deinit(self.arena);
 
         return self;
     }
 
-    pub fn give_back(self: *Generator, source: Source) Error!void {
-        if (@as(SourceKind, source) == SourceKind.Register) {
-            try self.manager.give_back(source.Register);
-        } else {
-            // @panic("TODO");
-        }
-    }
+    // pub fn give_back(self: *Generator, source: Source) Error!void {
+    //     if (@as(SourceKind, source) == SourceKind.Register) {
+    //         try self.manager.give_back(source.Register);
+    //     } else {
+    //         // @panic("TODO");
+    //     }
+    // }
 
-    pub fn evaluate(self: *Generator, cons: *constant.Constant, kind: BinaryKind, destination: ?Destination) Source {
-        switch (cons.*) {
-            .Number => |n| {
-                const source = Source{
-                    .Immediate = n.value,
-                };
+    // pub fn evaluate(self: *Generator, cons: *constant.Constant, kind: BinaryKind, destination: ?Destination) Source {
+    //     switch (cons.*) {
+    //         .Number => |n| {
+    //             const source = Source{
+    //                 .Immediate = n.value,
+    //             };
 
-                if (destination) |dst| {
-                    self.operations.push(Operation{
-                        .Binary = BinaryOperation{
-                            .kind = kind,
-                            .source = source,
-                            .destination = dst,
-                        },
-                    }) catch @panic("TODO");
+    //             if (destination) |dst| {
+    //                 self.operations.push(Operation{
+    //                     .Binary = BinaryOperation{
+    //                         .kind = kind,
+    //                         .source = source,
+    //                         .destination = dst,
+    //                     },
+    //                 }) catch @panic("TODO");
 
-                    return dst.as_source();
-                } else {
-                    return source;
-                }
-            },
-            .Binary => |binary| {
-                const dst = destination orelse @panic("TODO");
+    //                 return dst.as_source();
+    //             } else {
+    //                 return source;
+    //             }
+    //         },
+    //         .Binary => |binary| {
+    //             const dst = destination orelse @panic("TODO");
 
-                _ = self.evaluate(&binary.right, .Mov, dst);
-                _ = self.evaluate(&binary.left, binary.operator.to_gen_operation(), dst);
+    //             _ = self.evaluate(&binary.right, .Mov, dst);
+    //             _ = self.evaluate(&binary.left, binary.operator.to_gen_operation(), dst);
 
-                return dst.as_source();
-            },
-            .Unary => |unary| {
-                _ = self.evaluate(&unary.constant, .Mov, null);
-            },
-            .Parameter => |_| @panic("TODO"),
-            .Call => |call| {
-                const rax_used = self.manager.is_used(Register.Rax);
+    //             return dst.as_source();
+    //         },
+    //         .Unary => |unary| {
+    //             _ = self.evaluate(&unary.constant, .Mov, null);
+    //         },
+    //         .Parameter => |_| @panic("TODO"),
+    //         .Call => |call| {
+    //             const rax_used = self.manager.is_used(Register.Rax);
 
-                if (rax_used) {
-                    self.operations.push(Operation{
-                        .Binary = BinaryOperation{
-                            .kind = BinaryKind.Mov,
-                            .source = Source{
-                                .Register = Register.Rax,
-                            },
-                            .destination = Destination.Stack,
-                        },
-                    }) catch @panic("TODO");
-                }
+    //             if (rax_used) {
+    //                 self.operations.push(Operation{
+    //                     .Binary = BinaryOperation{
+    //                         .kind = BinaryKind.Mov,
+    //                         .source = Source{
+    //                             .Register = Register.Rax,
+    //                         },
+    //                         .destination = Destination.Stack,
+    //                     },
+    //                 }) catch @panic("TODO");
+    //             }
 
-                if (call.procedure.inner.size > BASE_SIZE) {
-                    self.operations.extend(&.{
-                        Operation{
-                            .Binary = BinaryOperation{
-                                .kind = BinaryKind.Sub,
-                                .source = Source{
-                                    .Immediate = call.procedure.inner.size,
-                                },
-                                .destination = Destination{
-                                    .Register = Register.Rsp,
-                                },
-                            },
-                        },
-                        Operation{
-                            .Binary = BinaryOperation{
-                                .kind = BinaryKind.Mov,
-                                .source = Source{
-                                    .Register = Register.Rsp,
-                                },
-                                .destination = Destination{
-                                    .Register = Register.Rax,
-                                },
-                            },
-                        },
-                    }) catch @panic("TODO");
-                }
+    //             if (call.procedure.inner.size > BASE_SIZE) {
+    //                 self.operations.extend(&.{
+    //                     Operation{
+    //                         .Binary = BinaryOperation{
+    //                             .kind = BinaryKind.Sub,
+    //                             .source = Source{
+    //                                 .Immediate = call.procedure.inner.size,
+    //                             },
+    //                             .destination = Destination{
+    //                                 .Register = Register.Rsp,
+    //                             },
+    //                         },
+    //                     },
+    //                     Operation{
+    //                         .Binary = BinaryOperation{
+    //                             .kind = BinaryKind.Mov,
+    //                             .source = Source{
+    //                                 .Register = Register.Rsp,
+    //                             },
+    //                             .destination = Destination{
+    //                                 .Register = Register.Rax,
+    //                             },
+    //                         },
+    //                     },
+    //                 }) catch @panic("TODO");
+    //             }
 
-                self.operations.push(Operation{
-                    .Call = call.procedure.offset,
-                }) catch @panic("TODO");
+    //             self.operations.push(Operation{
+    //                 .Call = call.procedure.offset,
+    //             }) catch @panic("TODO");
 
-                if (rax_used) {
-                    self.operations.push(Operation{ .Binary = BinaryOperation{
-                        .kind = BinaryKind.Mov,
-                        .source = Source.Stack,
-                        .destination = Destination{ .Register = Register.Rax },
-                    } }) catch @panic("TODO");
-                }
+    //             if (rax_used) {
+    //                 self.operations.push(Operation{ .Binary = BinaryOperation{
+    //                     .kind = BinaryKind.Mov,
+    //                     .source = Source.Stack,
+    //                     .destination = Destination{ .Register = Register.Rax },
+    //                 } }) catch @panic("TODO");
+    //             }
 
-                const src = if (destination) |d| d.as_source() else null;
+    //             const src = if (destination) |d| d.as_source() else null;
 
-                return src orelse blk: {
-                    if (call.procedure.inner.size > BASE_SIZE) {
-                        break :blk Source{
-                            .Memory = Memory{
-                                .register = Register.Rsp,
-                                .offset = 0,
-                            },
-                        };
-                    } else break :blk Source{
-                        .Register = Register.Rax,
-                    };
-                };
-            },
-            .Construct => |construct| {
-                var offset: usize = 0;
-                const dest = destination orelse @panic("TODO");
-                const dst = blk: {
-                    if (@as(DestinationKind, dest) == .Register) {
-                        break :blk Destination{
-                            .Memory = Memory{
-                                .register = dest.Register,
-                                .offset = 0,
-                            },
-                        };
-                    } else {
-                        break :blk dest;
-                    }
-                };
+    //             return src orelse blk: {
+    //                 if (call.procedure.inner.size > BASE_SIZE) {
+    //                     break :blk Source{
+    //                         .Memory = Memory{
+    //                             .register = Register.Rsp,
+    //                             .offset = 0,
+    //                         },
+    //                     };
+    //                 } else break :blk Source{
+    //                     .Register = Register.Rax,
+    //                 };
+    //             };
+    //         },
+    //         .Construct => |construct| {
+    //             var offset: usize = 0;
+    //             const dest = destination orelse @panic("TODO");
+    //             const dst = blk: {
+    //                 if (@as(DestinationKind, dest) == .Register) {
+    //                     break :blk Destination{
+    //                         .Memory = Memory{
+    //                             .register = dest.Register,
+    //                             .offset = 0,
+    //                         },
+    //                     };
+    //                 } else {
+    //                     break :blk dest;
+    //                 }
+    //             };
 
-                for (0..construct.constants.len) |i| {
-                    self.operations.push(Operation{
-                        .Binary = BinaryOperation{
-                            .kind = BinaryKind.Mov,
-                            .source = self.evaluate(&construct.constants.items[i], .Mov, null),
-                            .destination = Destination{
-                                .Memory = Memory{
-                                    .register = dst.Memory.register,
-                                    .offset = dst.Memory.offset + offset,
-                                },
-                            },
-                        },
-                    }) catch @panic("TODO");
+    //             for (0..construct.constants.len) |i| {
+    //                 self.operations.push(Operation{
+    //                     .Binary = BinaryOperation{
+    //                         .kind = BinaryKind.Mov,
+    //                         .source = self.evaluate(&construct.constants.items[i], .Mov, null),
+    //                         .destination = Destination{
+    //                             .Memory = Memory{
+    //                                 .register = dst.Memory.register,
+    //                                 .offset = dst.Memory.offset + offset,
+    //                             },
+    //                         },
+    //                     },
+    //                 }) catch @panic("TODO");
 
-                    offset += construct.constants.items[i].get_type().?.size;
-                }
+    //                 offset += construct.constants.items[i].get_type().?.size;
+    //             }
 
-                return dest.as_source();
-            },
-            .FieldAcess => |field| {
-                const constant_source = self.evaluate(&field.constant, .Mov, null);
-                const register = constant_source.Memory.register;
-                const offset = constant_source.Memory.offset;
+    //             return dest.as_source();
+    //         },
+    //         .FieldAcess => |field| {
+    //             const constant_source = self.evaluate(&field.constant, .Mov, null);
+    //             const register = constant_source.Memory.register;
+    //             const offset = constant_source.Memory.offset;
 
-                if (destination) |dst| {
-                    self.operations.push(Operation{
-                        .Binary = BinaryOperation{
-                            .kind = kind,
-                            .source = Source{
-                                .Memory = Memory{
-                                    .register = register,
-                                    .offset = offset + field.offset,
-                                },
-                            },
-                            .destination = dst,
-                        },
-                    }) catch @panic("TODO");
+    //             if (destination) |dst| {
+    //                 self.operations.push(Operation{
+    //                     .Binary = BinaryOperation{
+    //                         .kind = kind,
+    //                         .source = Source{
+    //                             .Memory = Memory{
+    //                                 .register = register,
+    //                                 .offset = offset + field.offset,
+    //                             },
+    //                         },
+    //                         .destination = dst,
+    //                     },
+    //                 }) catch @panic("TODO");
 
-                    return dst.as_source();
-                }
+    //                 return dst.as_source();
+    //             }
 
-                return Source{ .Memory = Memory{
-                    .register = register,
-                    .offset = field.offset,
-                } };
-            },
-            .Ref => |ref| {
+    //             return Source{ .Memory = Memory{
+    //                 .register = register,
+    //                 .offset = field.offset,
+    //             } };
+    //         },
+    //         .Ref => |ref| {
 
-                const dst = blk: {
-                    if (self.manager.get_registry(ref)) |dst| {
-                        if (destination) |d| {
-                            self.operations.push(Operation{
-                                .Binary = BinaryOperation{
-                                    .kind = kind,
-                                    .source = dst.as_source(),
-                                    .destination = d,
-                                },
-                            }) catch @panic("TODO");
+    //             const dst = blk: {
+    //                 if (self.manager.get_registry(ref)) |dst| {
+    //                     if (destination) |d| {
+    //                         self.operations.push(Operation{
+    //                             .Binary = BinaryOperation{
+    //                                 .kind = kind,
+    //                                 .source = dst.as_source(),
+    //                                 .destination = d,
+    //                             },
+    //                         }) catch @panic("TODO");
 
-                            break :blk d;
-                        } else {
-                            break :blk dst;
-                        }
-                    } else {
-                        if (destination) |dst| {
-                            _ = self.evaluate(ref, kind, dst);
-                            break :blk dst;
-                        } else {
-                            const dst = self.manager.get(ref);
-                            _ = self.evaluate(ref, kind, dst);
+    //                         break :blk d;
+    //                     } else {
+    //                         break :blk dst;
+    //                     }
+    //                 } else {
+    //                     if (destination) |dst| {
+    //                         _ = self.evaluate(ref, kind, dst);
+    //                         break :blk dst;
+    //                     } else {
+    //                         const dst = self.manager.get(ref);
+    //                         _ = self.evaluate(ref, kind, dst);
 
-                            break :blk dst;
-                        }
-                    }
-                };
-                return dst.as_source();
-            },
-            .Scope => |scope| {
-                for (0..scope.constants.len) |i| {
-                    _ = self.evaluate(&scope.constants.items[i], .Mov, null);
-                }
+    //                         break :blk dst;
+    //                     }
+    //                 }
+    //             };
+    //             return dst.as_source();
+    //         },
+    //         .Scope => |scope| {
+    //             for (0..scope.constants.len) |i| {
+    //                 _ = self.evaluate(&scope.constants.items[i], .Mov, null);
+    //             }
 
-                if (scope.return_value) |*value| {
-                    return self.evaluate(value, .Mov, destination);
-                }
-            },
-            .Procedure, .Type => @panic("Should be unreachable"),
-        }
+    //             if (scope.return_value) |*value| {
+    //                 return self.evaluate(value, .Mov, destination);
+    //             }
+    //         },
+    //         .Procedure, .Type => @panic("Should be unreachable"),
+    //     }
 
-        @panic("TODO");
-    }
+    //     @panic("TODO");
+    // }
 
-    pub fn push_procedure(self: *Generator, return_value: *constant.Constant) void {
-        util.print(.Info, "--------------------- Procedure start () - Offset () ---------------", .{});
+    // pub fn push_procedure(self: *Generator, return_value: *constant.Constant) void {
+    //     util.print(.Info, "--------------------- Procedure start () - Offset () ---------------", .{});
 
-        defer self.operations.clear();
+    //     defer self.operations.clear();
 
-        _ = self.evaluate(return_value, .Mov, Destination{ .Register = Register.Rax });
+    //     _ = self.evaluate(return_value, .Mov, Destination{ .Register = Register.Rax });
 
-        var startup_instructions = collections.Vec(Operation).new(2, self.arena) catch @panic("TODO");
-        defer startup_instructions.deinit(self.arena);
+    //     var startup_instructions = collections.Vec(Operation).new(2, self.arena) catch @panic("TODO");
+    //     defer startup_instructions.deinit(self.arena);
 
-        self.operations.push(Operation.Ret) catch @panic("TODO");
+    //     self.operations.push(Operation.Ret) catch @panic("TODO");
 
-        for (startup_instructions.offset(0) catch unreachable) |operation| {
-            operation.write(&self.code);
-        }
+    //     for (startup_instructions.offset(0) catch unreachable) |operation| {
+    //         operation.write(&self.code);
+    //     }
 
-        for (self.operations.offset(0) catch unreachable) |operation| {
-            operation.write(&self.code);
-        }
+    //     for (self.operations.offset(0) catch unreachable) |operation| {
+    //         operation.write(&self.code);
+    //     }
 
-        self.operations.clear();
-        self.manager.clear();
-        util.print(.Info, "--------------------- Procedure end ---------------", .{});
-    }
+    //     self.operations.clear();
+    //     self.manager.clear();
+    //     util.print(.Info, "--------------------- Procedure end ---------------", .{});
+    // }
 
-    pub fn generate(self: *Generator, stream: collections.Stream, main_procedure_offset: usize) void {
+    pub fn generate(self: *Generator, stream: collections.Stream(u8), main_procedure_offset: usize) void {
         const program_end = [_]Operation{
             Operation{ .Call = main_procedure_offset },
             Operation{ .Binary = BinaryOperation{
@@ -750,7 +750,7 @@ pub const Generator = struct {
     }
 
     pub fn deinit(self: *Generator) void {
-        self.manager.deinit(self.arena);
+        // self.manager.deinit(self.arena);
         self.operations.deinit(self.arena);
         self.data.deinit(self.arena);
         self.code.deinit(self.arena);

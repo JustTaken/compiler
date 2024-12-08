@@ -71,7 +71,7 @@ pub fn as_bytes(T: type, ptr: *const T) []const u8 {
     return buffer[0..size];
 }
 
-fn align_with(value: usize, with: usize) usize {
+pub fn align_with(value: usize, with: usize) usize {
     const rest = value % with;
 
     if (rest == 0) {

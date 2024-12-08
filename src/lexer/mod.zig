@@ -16,10 +16,10 @@ pub const Lexer = struct {
 
     general_offset: u32,
 
-    stream: collections.Stream,
+    stream: collections.Stream(u8),
     arena: *mem.Arena,
 
-    pub fn new(stream: collections.Stream, allocator: *mem.Arena) error{OutOfMemory}!Lexer {
+    pub fn new(stream: collections.Stream(u8), allocator: *mem.Arena) error{OutOfMemory}!Lexer {
         var self = Lexer{
             .stream = stream,
             .offset = 0,
@@ -27,17 +27,19 @@ pub const Lexer = struct {
             .general_offset = 0,
             .previous = token.Token.EOF,
             .current = token.Token.EOF,
-            .arena = try allocator.child("Lexer", @sizeOf(mem.Arena) + (mem.PAGE_SIZE >> 1)),
+            .arena = try allocator.child("Lexer", mem.PAGE_SIZE),
             .words = undefined,
             .content = undefined,
         };
 
         errdefer self.arena.deinit();
 
-        self.words = try collections.String.new(1024, self.arena);
+        const free_space = self.arena.capacity - self.arena.usage;
+
+        self.words = try collections.String.new(free_space >> 1, self.arena);
         errdefer self.words.deinit(self.arena);
 
-        self.content = try collections.String.new(1024, self.arena);
+        self.content = try collections.String.new(free_space >> 1, self.arena);
         errdefer self.content.deinit(self.arena);
 
         self.advance();
@@ -99,9 +101,8 @@ pub const Lexer = struct {
                 }
 
                 const string = self.content.range(util.Range.new(self.start, self.offset)) catch unreachable;
-                const range = self.words.extend_range(string) catch @panic("TODO");
 
-                self.current = token.Token{ .Number = self.words.range(range) catch unreachable };
+                self.current = token.Token{ .Number = util.parse(string) };
             } else if (util.is_alpha(c)) {
                 while (!self.at_end() and util.is_ascci(self.content.value(self.offset) catch unreachable)) {
                     self.offset += 1;
@@ -192,6 +193,29 @@ pub const Lexer = struct {
         }
     }
 
+    // try to rtemove this later
+    // Try to remove this later
+
+    pub fn next(self: *Lexer) ?token.Token {
+        self.advance();
+
+        if (self.current.eql(token.Token.Eof)) {
+            return null;
+        }
+
+        return self.current;
+    }
+
+    // pub fn prev(ptr: *anyopaque) token.Token {
+    //     const self: *Lexer = @ptrCast(@alignCast(ptr));
+    //     return self.previous;
+    // }
+
+    // pub fn actual(ptr: *anyopaque) token.Token {
+    //     const self: *Lexer = @ptrCast(@alignCast(ptr));
+    //     return self.current;
+    // }
+
     pub fn match(self: *Lexer, t: token.Token) bool {
         if (self.current.eql(t)) {
             self.advance();
@@ -199,13 +223,18 @@ pub const Lexer = struct {
             return true;
         }
 
-        return self.current.eql(token.Token.EOF);
+        return false;
     }
 
-    pub fn consume(self: *Lexer, t: token.Token) void {
-        util.assert(self.current.eql(t));
-        self.advance();
-    }
+    // pub fn iter(self: *Lexer) collections.Iter(token.Token) {
+    //     return .{
+    //         .payload = self,
+    //         .next_fn = next,
+    //         .current_fn = actual,
+    //         .match_fn = match,
+    //         .prev_fn = prev,
+    //     };
+    // }
 
     pub fn deinit(self: *Lexer) void {
         self.content.deinit(self.arena);

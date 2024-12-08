@@ -1,6 +1,6 @@
 const collections = @import("collections");
 const mem = @import("mem");
-const generator = @import("generator.zig");
+// const generator = @import("generator.zig");
 
 pub const ConstantBinary = struct {
     operator: Operator,
@@ -25,14 +25,14 @@ pub const ConstantBinary = struct {
             };
         }
 
-        pub fn to_gen_operation(self: Operator) generator.BinaryOperationKind {
-            return switch (self) {
-                Operator.Add => .Add,
-                Operator.Sub => .Sub,
-                Operator.Mul => .Mul,
-                else => @panic("TODO"),
-            };
-        }
+        // pub fn to_gen_operation(self: Operator) generator.BinaryKind {
+        //     return switch (self) {
+        //         Operator.Add => .Add,
+        //         Operator.Sub => .Sub,
+        //         Operator.Mul => .Mul,
+        //         else => @panic("TODO"),
+        //     };
+        // }
     };
 };
 
@@ -290,47 +290,47 @@ pub const Constant = union(ConstantKind) {
         };
     }
 
-    fn unuse(self: Constant, gen: *generator.Generator) void {
-        switch (self) {
-            .Parameter, .Number => {},
-            .Procedure, .Type => unreachable,
-            .Ref => |constant| constant.unuse(gen),
-            .FieldAcess => |field| field.constant.unuse(gen),
-            .Call => |call| {
-                if (call.usage > 0) return;
-                if (call.procedure.inner.size > 4) {
-                    gen.push_operation(generator.Operation{ .Binary = generator.BinaryOperation{
-                        .kind = .Add,
-                        .source = generator.Source{ .Immediate = call.procedure.inner.size },
-                        .destination = generator.Destination{ .Register = .Rsp },
-                    } });
-                } else {
-                    gen.give_back(generator.Source{ .Register = .Rax }) catch @panic("TODO");
-                }
-            },
-            .Unary => |unary| unary.constant.unuse(gen),
-            .Binary => |binary| {
-                if (binary.usage > 0) return;
-                if (binary.source) |source| {
-                    gen.give_back(source) catch @panic("TODO");
-                    binary.source = null;
-                }
-            },
-            .Construct => |construct| {
-                if (construct.usage > 0) return;
-                if (construct.source) |source| {
-                    gen.give_back(source) catch @panic("TODO");
-                    construct.source = null;
-                }
-            },
-            .Scope => |scope| {
-                if (scope.usage > 0) return;
-                if (scope.return_value) |constant| {
-                    constant.unuse(gen);
-                }
-            },
-        }
-    }
+    // fn unuse(self: Constant) void {
+    //     switch (self) {
+    //         .Parameter, .Number => {},
+    //         .Procedure, .Type => unreachable,
+    //         .Ref => |constant| constant.unuse(gen),
+    //         .FieldAcess => |field| field.constant.unuse(gen),
+    //         .Call => |call| {
+    //             if (call.usage > 0) return;
+    //             if (call.procedure.inner.size > 4) {
+    //                 gen.push_operation(generator.Operation{ .Binary = generator.BinaryOperation{
+    //                     .kind = .Add,
+    //                     .source = generator.Source{ .Immediate = call.procedure.inner.size },
+    //                     .destination = generator.Destination{ .Register = .Rsp },
+    //                 } });
+    //             } else {
+    //                 gen.give_back(generator.Source{ .Register = .Rax }) catch @panic("TODO");
+    //             }
+    //         },
+    //         .Unary => |unary| unary.constant.unuse(gen),
+    //         .Binary => |binary| {
+    //             if (binary.usage > 0) return;
+    //             if (binary.source) |source| {
+    //                 gen.give_back(source) catch @panic("TODO");
+    //                 binary.source = null;
+    //             }
+    //         },
+    //         .Construct => |construct| {
+    //             if (construct.usage > 0) return;
+    //             if (construct.source) |source| {
+    //                 gen.give_back(source) catch @panic("TODO");
+    //                 construct.source = null;
+    //             }
+    //         },
+    //         .Scope => |scope| {
+    //             if (scope.usage > 0) return;
+    //             if (scope.return_value) |constant| {
+    //                 constant.unuse(gen);
+    //             }
+    //         },
+    //     }
+    // }
 
     pub fn deinit(self: Constant, arena: *mem.Arena) void {
         switch (self) {

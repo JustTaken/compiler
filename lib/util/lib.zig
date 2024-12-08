@@ -2,10 +2,6 @@ const std = @import("std");
 const collections = @import("collections");
 const mem = @import("mem");
 
-const String = collections.String;
-const Iter = collections.Iter;
-const Arena = mem.Arena;
-
 pub const Range = struct {
     start: u32,
     end: u32,
@@ -31,7 +27,7 @@ pub const Logger = struct {
         Debug,
     };
 
-    var normal_buffer: String = String{
+    var normal_buffer = collections.String{
         .items = undefined,
         .len = 0,
         .capacity = 0,
@@ -39,14 +35,14 @@ pub const Logger = struct {
 
     const BACKUP_BUFFER_LEN: usize = 1024;
     var backup_array: [BACKUP_BUFFER_LEN]u8 = undefined;
-    var backup_buffer = collections.string_from_buffer(&backup_array);
+    var backup_buffer = collections.String.from_buffer(&backup_array);
 
-    var buffer: String = undefined;
+    var buffer: collections.String = undefined;
 
     pub var level: Level = .None;
 
-    pub fn set_buffer(size: u32, arena: *Arena) error{OutOfMemory}!void {
-        normal_buffer = try String.new(size, arena);
+    pub fn set_buffer(size: u32, arena: *mem.Arena) error{OutOfMemory}!void {
+        normal_buffer = try collections.String.new(size, arena);
     }
 
     pub fn format(comptime fmt: []const u8, args: anytype) error{Overflow}!void {
@@ -57,7 +53,7 @@ pub const Logger = struct {
             @compileError("expected tuple or struct argument, found " ++ @typeName(ArgsType));
         }
 
-        comptime var iter = Iter(u8).new(fmt);
+        comptime var iter = collections.ComptimeIter(u8).new(fmt);
         comptime var arg_index: usize = 0;
 
         inline while (comptime iter.next()) |char| {
@@ -135,7 +131,7 @@ pub const Logger = struct {
         buffer.extend("}\n") catch unreachable;
     }
 
-    pub fn deinit(arena: *Arena) void {
+    pub fn deinit(arena: *mem.Arena) void {
         normal_buffer.deinit(arena);
     }
 
