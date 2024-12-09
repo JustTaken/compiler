@@ -186,20 +186,6 @@ pub fn Vec(T: type) type {
             mem.back_copy(T, self.items[index..self.len], self.items[index + count .. self.len + count]);
         }
 
-        pub fn mult_extend(self: *Self, args: []const []const T) error{OutOfBounds}!void {
-            for (args) |arg| {
-                try self.extend(arg);
-            }
-        }
-
-        pub fn extend_range(self: *Self, items: []const T) error{OutOfBounds}!util.Range {
-            const start = self.len;
-
-            try self.extend(items);
-
-            return util.Range.new(start, self.len);
-        }
-
         pub fn read(ptr: *anyopaque, buffer: *Self) error{ AtEnd, OutOfBounds }!void {
             const self: *Self = @ptrCast(@alignCast(ptr));
             try buffer.extend(self.offset(0) catch unreachable);
@@ -261,6 +247,12 @@ pub fn Vec(T: type) type {
             if (r.start > r.end or r.end > self.len) return error.OutOfBounds;
 
             return self.items[r.start..r.end];
+        }
+
+        pub fn slice(self: *const Self, s: Slice) error{OutOfBounds}![]const T {
+            if (s.ptr >= self.len or s.ptr + s.len > self.len) return error.OutOfBounds;
+
+            return self.items[s.ptr..s.ptr + s.len];
         }
 
         pub fn array(self: *Self, arena: *mem.Arena) Array(T) {
@@ -380,35 +372,76 @@ pub fn StringMap(T: type) type {
     };
 }
 
-pub fn Iter(T: type) type {
+pub const Slice = struct {
+    ptr: util.Index,
+    len: util.Index,
+
+    pub fn new(ptr: util.Index, len: util.Index) Slice {
+        return Slice {
+            .ptr = ptr,
+            .len = len,
+        };
+    }
+};
+
+pub fn SliceManager(T: type) type {
     return struct {
-        payload: *anyopaque,
-        next_fn: *const fn (ptr: *anyopaque) ?T,
-        prev_fn: *const fn (ptr: *anyopaque) T,
-        current_fn: *const fn (ptr: *anyopaque) T,
-        match_fn: *const fn (ptr: *anyopaque, item: T) bool,
+        slices: Vec(Slice),
+        buffer: Vec(T),
+        index: usize,
 
         const Self = @This();
 
-        pub fn next(self: *const Self) ?T {
-            return self.next_fn(self.payload);
+        pub fn new(size: u32, allocator: *mem.Arena) error{OutOfMemory}!Self {
+            return Self {
+                .slices = try Vec(Slice).new(size >> 2, allocator),
+                .buffer = try Vec(T).new(size, allocator),
+                .index = 0,
+            };
         }
 
-        pub fn current(self: *const Self) T {
-            return self.current_fn(self.payload);
+        pub fn push(self: *Self, items: []const T) error{OutOfBounds}!u8 {
+            const index: u8 = @intCast(self.slices.len);
+            const ptr: u8 = @intCast(self.buffer.len);
+            const len: u8 = @intCast(items.len);
+
+            try self.buffer.extend(items);
+            try self.slices.push(Slice.new(ptr, len));
+            self.index += 1;
+
+            return index;
         }
 
-        pub fn match(self: *const Self, item: T) bool {
-            return self.match_fn(self.payload, item);
+        pub fn start(self: *Self) error{OutOfBounds}!u8 {
+            const index: u8 = @intCast(self.slices.len);
+            const ptr: u8 = @intCast(self.buffer.len);
+
+            try self.slices.push(Slice.new(ptr, 0));
+            self.index += 1;
+
+            return index;
         }
 
-        pub fn prev(self: *const Self) T {
-            return self.prev_fn(self.payload);
+        pub fn get(self: *const Self, index: u8) error{OutOfBounds}![]const T {
+            const slice = try self.slices.value(index);
+            return try self.buffer.slice(slice);
         }
 
-        // pub fn consume(self: *const Self, item: T) error{False}!void {
-            // try self.consume_fn(item);
-        // }
+        pub fn extend(self: *const Self, item: T) error{OutOfBounds}!void {
+            try self.buffer.push(item);
+            const last = self.slices.get(self.index).len;
+            last += 1;
+        }
+
+        pub fn pop(self: *Self) error{OutOfBounds}!void {
+            if (self.index == 0) return error.OutOfBounds;
+            self.index -= 1;
+        }
+
+        pub fn deinit(self: *Self, arena: *mem.Arena) void {
+            self.slices.deinit(arena);
+            self.buffer.deinit(arena);
+        }
     };
 }
 

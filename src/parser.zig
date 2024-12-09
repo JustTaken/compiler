@@ -10,7 +10,7 @@ const token = lexer.token;
 
 const ARGUMENT_MAX: u32 = 20;
 
-pub const Precedence = enum(usize) {
+const Precedence = enum(usize) {
     Nothing,
     Assignment,
     Equality,
@@ -23,73 +23,81 @@ pub const Precedence = enum(usize) {
     Scope,
 };
 
-const RuleKind = enum {
-    ParentesisLeft,
-    CurlyBracketLeft,
-    Dot,
-    Minus, Plus, Bang, Equality,
-    Factor,
-    Comparison,
-    Identifier,
-    String,
-    Number,
-
-    fn init_buffer(buffer: *collections.Vec(Rule)) error{OutOfBounds}!void {
-        const data = [_] Rule {
-            Rule.new(Parser.group, Parser.call, .Call),
-            Rule.new(Parser.scope, Parser.construct, .Scope),
-            Rule.new(null, Parser.property, .Call),
-
-            Rule.new(Parser.unary, Parser.binary, .Term),
-            Rule.new(null, Parser.binary, .Term),
-            Rule.new(Parser.unary, null, .Equality),
-            Rule.new(null, Parser.binary, .Equality),
-            Rule.new(null, Parser.binary, .Factor),
-            Rule.new(null, Parser.binary, .Comparison),
-
-            Rule.new(Parser.identifier, null, .Nothing),
-            Rule.new(Parser.string, null, .Nothing),
-            Rule.new(Parser.number, null, .Nothing),
-        };
-
-        for (data) |f| {
-            try buffer.push(f);
-        }
-    }
-
-    fn from_token(t: token.Token) usize {
-        const kind: RuleKind = switch (t) {
-            .Symbol => |symbol| switch (symbol) {
-                .ParentesisLeft => .ParentesisLeft,
-                .CurlyBracketLeft => .CurlyBracketLeft,
-                .Dot => .Dot,
-                else => @panic("TODO"),
-            },
-            .Operator => |operator| switch (operator) {
-                .Minus => .Minus,
-                .Plus => .Plus,
-                .Bang => .Bang,
-                .BangEqual, .EqualEqual => .Equality,
-                .Slash, .Star => .Factor,
-                else => @panic("TODO"),
-            },
-            .Identifier => .Identifier,
-            .Number => .Number,
-            .String => .String,
-            .Keyword => @panic("TODO"),
-            .Eof => @panic("TODO"),
-        };
-
-        return @intFromEnum(kind);
-    }
-};
-
 const Fn = *const fn (parser: *Parser, lexer: *lexer.Lexer) void;
 
-pub const Rule = struct {
+const Rule = struct {
     prefix: ?Fn,
     infix: ?Fn,
     precedence: Precedence,
+
+    const Kind = enum {
+        Let,
+        ParentesisLeft,
+        CurlyBracketLeft,
+        Dot,
+        Minus,
+        Plus,
+        Bang,
+        Equality,
+        Factor,
+        Comparison,
+        Identifier,
+        String,
+        Number,
+
+        fn init_buffer(buffer: *collections.Vec(Rule)) error{OutOfBounds}!void {
+            const data = [_]Rule{
+                Rule.new(Parser.let, null, .Declaration),
+                Rule.new(Parser.group, Parser.call, .Call),
+                Rule.new(Parser.scope, Parser.construct, .Scope),
+                Rule.new(null, Parser.property, .Call),
+
+                Rule.new(Parser.unary, Parser.binary, .Term),
+                Rule.new(null, Parser.binary, .Term),
+                Rule.new(Parser.unary, null, .Equality),
+                Rule.new(null, Parser.binary, .Equality),
+                Rule.new(null, Parser.binary, .Factor),
+                Rule.new(null, Parser.binary, .Comparison),
+
+                Rule.new(Parser.identifier, null, .Nothing),
+                Rule.new(Parser.string, null, .Nothing),
+                Rule.new(Parser.number, null, .Nothing),
+            };
+
+            for (data) |f| {
+                try buffer.push(f);
+            }
+        }
+
+        fn from_token(t: token.Token) usize {
+            const kind: Kind = switch (t) {
+                .Symbol => |symbol| switch (symbol) {
+                    .ParentesisLeft => .ParentesisLeft,
+                    .CurlyBracketLeft => .CurlyBracketLeft,
+                    .Dot => .Dot,
+                    else => @panic("TODO"),
+                },
+                .Operator => |operator| switch (operator) {
+                    .Minus => .Minus,
+                    .Plus => .Plus,
+                    .Bang => .Bang,
+                    .BangEqual, .EqualEqual => .Equality,
+                    .Slash, .Star => .Factor,
+                    else => @panic("TODO"),
+                },
+                .Identifier => .Identifier,
+                .Number => .Number,
+                .String => .String,
+                .Keyword => |keyword| switch (keyword) {
+                    .Let => .Let,
+                    else => @panic("TODO"),
+                },
+                .Eof => @panic("TODO"),
+            };
+
+            return @intFromEnum(kind);
+        }
+    };
 
     fn new(prefix: ?Fn, infix: ?Fn, precedence: Precedence) Rule {
         return Rule{
@@ -100,43 +108,80 @@ pub const Rule = struct {
     }
 };
 
+const NodeManager = struct {
+    nodes: collections.SliceManager(node.Node),
+    type_fields: collections.Vec(node.Type.Field),
+    construct_values: collections.SliceManager(node.Construct.Value),
+    parameters: collections.Vec(node.Procedure.Parameter),
+    words: collections.SliceManager(collections.Slice),
+
+    fn new(allocator: *mem.Arena) error{OutOfMemory}!NodeManager {
+        // util.print(.Info, "Scope: {}", .{@sizeOf(node.Scope)});
+        // util.print(.Info, "Construct: {}", .{@sizeOf(node.Construct)});
+        // util.print(.Info, "Let: {}", .{@sizeOf(node.Let)});
+        // util.print(.Info, "Call: {}", .{@sizeOf(node.Call)});
+        // util.print(.Info, "Binary: {}", .{@sizeOf(node.Binary)});
+        // util.print(.Info, "Unary: {}", .{@sizeOf(node.Unary)});
+        // util.print(.Info, "Property: {}", .{@sizeOf(node.Property)});
+        // util.print(.Info, "Identifier: {}", .{@sizeOf(node.Identifier)});
+        // util.print(.Info, "Number: {}", .{@sizeOf(node.Number)});
+        // util.print(.Info, "Node: {}", .{@sizeOf(node.Node)});
+
+        return NodeManager{
+            .nodes = try collections.SliceManager(node.Node).new(100, allocator),
+            .type_fields = try collections.Vec(node.Type.Field).new(20, allocator),
+            .construct_values = try collections.SliceManager(node.Construct.Value).new(20, allocator),
+            .parameters = collections.Vec(node.Procedure.Parameter).new(20, allocator),
+            .words = try collections.SliceManager(collections.Slice).new(20, allocator),
+        };
+    }
+
+    fn deinit(self: *NodeManager, allocator: *mem.Arena) void {
+        self.words.deinit(allocator);
+        self.parameters.deinit(allocator);
+        self.construct_values.deinit(allocator);
+        self.type_fields.deinit(allocator);
+        self.nodes.deinit(allocator);
+    }
+};
+
 pub const Parser = struct {
     rules: collections.Vec(Rule),
-    nodes: collections.Vec(node.Node),
+    manager: NodeManager,
     arena: *mem.Arena,
 
-    pub fn new(allocator: *mem.Arena) error{OutOfBounds, OutOfMemory}!Parser {
-        var self = Parser {
+    pub fn new(allocator: *mem.Arena) error{ OutOfBounds, OutOfMemory }!Parser {
+        var self = Parser{
             .rules = undefined,
-            .nodes = undefined,
-            .arena = try allocator.child("Parser", mem.PAGE_SIZE * 2),
+            .manager = undefined,
+            .arena = try allocator.child("Parser", mem.PAGE_SIZE),
         };
 
         errdefer self.arena.deinit();
 
-        self.nodes = try collections.Vec(node.Node).new(5, self.arena);
-        errdefer self.nodes.deinit(self.arena);
+        self.manager = try NodeManager.new(self.arena);
+        errdefer self.manager.deinit(self.arena);
 
-        self.rules = try collections.Vec(Rule).new(@typeInfo(RuleKind).@"enum".fields.len, self.arena);
+        self.rules = try collections.Vec(Rule).new(@typeInfo(Rule.Kind).@"enum".fields.len, self.arena);
         errdefer self.rules.deinit(self.arena);
 
-        try RuleKind.init_buffer(&self.rules);
+        try Rule.Kind.init_buffer(&self.rules);
 
         return self;
     }
 
     pub fn next(self: *Parser, tokenizer: *lexer.Lexer) ?node.Node {
-        if (self.nodes.len > 0) {
-            const n = self.nodes.pop() catch @panic("TODO");
-            n.deinit(self.arena);
-        }
+        // if (self.nodes.len > 0) {
+        //     const n = self.nodes.pop() catch @panic("TODO");
+        //     n.deinit(self.arena);
+        // }
 
         const tok = tokenizer.next() orelse return null;
 
         switch (tok) {
             .Keyword => |keyword| switch (keyword) {
-                .Procedure => self.procedure(),
-                .Type => self.typ(),
+                .Procedure => self.procedure(tokenizer),
+                .Type => self.typ(tokenizer),
                 else => @panic("TODO: No other statement kind is accepted for now"),
             },
             else => @panic("TODO: do not accept expressions here for now"),
@@ -156,8 +201,8 @@ pub const Parser = struct {
         self.parse(.Unary, tokenizer);
 
         switch (operator) {
-            .Bang => self.nodes.push(node.Node { .Unary = self.arena.create(node.Unary, node.Unary.new(self.nodes.pop() catch @panic("TODO"), .Bang)) catch @panic("TODO")}) catch @panic("TODO"),
-            .Minus => self.nodes.push(node.Node { .Unary = self.arena.create(node.Unary, node.Unary.new(self.nodes.pop() catch @panic("TODO"), .Negate)) catch @panic("TODO")}) catch @panic("TODO"),
+            .Bang => self.manager.nodes.extend(node.Node{ .Unary = node.Unary.new(.Bang) }) catch @panic("TODO"),
+            .Minus => self.manager.nodes.extend(node.Node{ .Unary = node.Unary.new(.Negate) }) catch @panic("TODO"),
             else => @panic("TODO"),
         }
     }
@@ -165,56 +210,54 @@ pub const Parser = struct {
     fn binary(self: *Parser, tokenizer: *lexer.Lexer) void {
         const operator = tokenizer.previous.Operator;
 
-        self.parse(@enumFromInt(@intFromEnum(self.rules.items[RuleKind.from_token(tokenizer.previous)].precedence) + 1), tokenizer);
+        self.parse(
+            @enumFromInt(
+                @intFromEnum(
+                    self.rules.items[Rule.Kind.from_token(tokenizer.previous)].precedence,
+                ) + 1,
+            ),
+            tokenizer,
+        );
 
         switch (operator) {
             .BangEqual => {
-                const right = self.nodes.pop() catch @panic("TODO");
-                const left = self.nodes.pop() catch @panic("TODO");
-
-                const eq = node.Node{ .Binary = self.arena.create(node.Binary, node.Binary.new(left, right, .Eq)) catch @panic("TODO")};
-                self.nodes.push(node.Node { .Unary = self.arena.create(node.Unary, node.Unary.new(eq, .Bang)) catch @panic("TODO")}) catch @panic("TODO");
+                self.manager.nodes.push(node.Node{ .Binary = node.Binary.new(.Eq) }) catch @panic("TODO");
+                self.manager.nodes.push(node.Node{ .Unary = node.Unary.new(.Bang) }) catch @panic("TODO");
             },
             .GreaterEqual => {
-                const right = self.nodes.pop() catch @panic("TODO");
-                const left = self.nodes.pop() catch @panic("TODO");
-
-                const lt = node.Node{ .Binary = self.arena.create(node.Binary, node.Binary.new(left, right, .Lt)) catch @panic("TODO")};
-                self.nodes.push(node.Node { .Unary = self.arena.create(node.Unary, node.Unary.new(lt, .Bang)) catch @panic("TODO")}) catch @panic("TODO");
+                self.manager.nodes.push(node.Node{ .Binary = node.Binary.new(.Lt) }) catch @panic("TODO");
+                self.manager.nodes.push(node.Node{ .Unary = node.Unary.new(.Bang) }) catch @panic("TODO");
             },
             .LessEqual => {
-                const right = self.nodes.pop() catch @panic("TODO");
-                const left = self.nodes.pop() catch @panic("TODO");
-
-                const gt = node.Node{ .Binary = self.arena.create(node.Binary, node.Binary.new(left, right, .Gt)) catch @panic("TODO")};
-                self.nodes.push(node.Node { .Unary = self.arena.create(node.Unary, node.Unary.new(gt, .Bang)) catch @panic("TODO")}) catch @panic("TODO");
+                self.manager.nodes.push(node.Node{ .Binary = node.Binary.new(.Gt) }) catch @panic("TODO");
+                self.manager.nodes.push(node.Node{ .Unary = node.Unary.new(.Bang) }) catch @panic("TODO");
             },
-            .Minus => {
-                const right = node.Node { .Unary = self.arena.create(node.Unary, node.Unary.new(self.nodes.pop() catch @panic("TODO"), .Negate)) catch @panic("TODO")};
-                const left = self.nodes.pop() catch @panic("TODO");
+            .Minus => self.manager.nodes.push(node.Node{ .Binary = node.Binary.new(.Add) }) catch @panic("TODO"),
+            .EqualEqual => self.manager.nodes.push(node.Node{ .Binary = node.Binary.new(.Eq) }) catch @panic("TODO"),
+            .Greater => self.manager.nodes.push(node.Node{ .Binary = node.Binary.new(.Gt) }) catch @panic("TODO"),
+            .Less => self.manager.nodes.push(node.Node{ .Binary = node.Binary.new(.Lt) }) catch @panic("TODO"),
+            .Plus => self.manager.nodes.push(node.Node{ .Binary = node.Binary.new(.Add) }) catch @panic("TODO"),
+            .Star => self.manager.nodes.push(node.Node{ .Binary = node.Binary.new(.Mul) }) catch @panic("TODO"),
+            .Slash => self.manager.nodes.push(node.Node{ .Binary = node.Binary.new(.Div) }) catch @panic("TODO"),
 
-                self.nodes.push(node.Node { .Binary = self.arena.create(node.Binary, node.Binary.new(left, right, .Add)) catch @panic("TODO") }) catch @panic("TODO");
-            },
-            .EqualEqual => self.nodes.push(node.Node { .Binary = self.arena.create(node.Binary, node.Binary.new(self.nodes.pop() catch @panic("TODO"), self.nodes.pop() catch @panic("TODO"), .Eq)) catch @panic("TODO")}) catch @panic("TODO"),
-            .Greater => self.nodes.push(node.Node { .Binary = self.arena.create(node.Binary, node.Binary.new(self.nodes.pop() catch @panic("TODO"), self.nodes.pop() catch @panic("TODO"), .Gt)) catch @panic("TODO")}) catch @panic("TODO"),
-            .Less => self.nodes.push(node.Node { .Binary = self.arena.create(node.Binary, node.Binary.new(self.nodes.pop() catch @panic("TODO"), self.nodes.pop() catch @panic("TODO"), .Lt)) catch @panic("TODO")}) catch @panic("TODO"),
-            .Plus => self.nodes.push(node.Node { .Binary = self.arena.create(node.Binary, node.Binary.new(self.nodes.pop() catch @panic("TODO"), self.nodes.pop() catch @panic("TODO"), .Add)) catch @panic("TODO")}) catch @panic("TODO"),
-            .Star => self.nodes.push(node.Node { .Binary = self.arena.create(node.Binary, node.Binary.new(self.nodes.pop() catch @panic("TODO"), self.nodes.pop() catch @panic("TODO"), .Mul)) catch @panic("TODO")}) catch @panic("TODO"),
-            .Slash => self.nodes.push(node.Node { .Binary = self.arena.create(node.Binary, node.Binary.new(self.nodes.pop() catch @panic("TODO"), self.nodes.pop() catch @panic("TODO"), .Div)) catch @panic("TODO")}) catch @panic("TODO"),
             else => @panic("TODO"),
         }
     }
 
     fn identifier(self: *Parser, tokenizer: *lexer.Lexer) void {
-        self.nodes.push(node.Node { .Identifier = tokenizer.previous.Identifier}) catch @panic("TODO");
+        self.manager.nodes.push(node.Node{
+            .Identifier = node.Identifier.new(self.manager.words.push(tokenizer.previous.Identifier) catch @panic("TODO")),
+        }) catch @panic("TODO");
     }
 
     fn number(self: *Parser, tokenizer: *lexer.Lexer) void {
-        self.nodes.push(node.Node { .Number = tokenizer.previous.Number }) catch @panic("TODO");
+        self.manager.nodes.push(node.Node{ .Number = node.Number.new(
+            self.manager.words.push(tokenizer.previous.Number) catch @panic("TODO"),
+        ) }) catch @panic("TODO");
     }
 
     fn construct(self: *Parser, tokenizer: *lexer.Lexer) void {
-        var values = collections.Vec(node.Construct.Value).new(ARGUMENT_MAX, self.arena) catch @panic("TODO");
+        const index = self.manager.construct_values.start();
 
         while (!tokenizer.match(token.Token.BRACERIGHT)) {
             if (!tokenizer.match(token.Token.COMMA) and !tokenizer.previous.eql(token.Token.BRACELEFT)) {
@@ -228,16 +271,20 @@ pub const Parser = struct {
 
             self.parse(.Assignment, tokenizer);
 
-            values.push(node.Construct.Value.new(name.Identifier, self.nodes.pop() catch @panic("TODO"))) catch @panic("TODO");
+            self.manager.construct_values.extend(node.Construct.Value.new(
+                self.manager.words.push(name.Identifier) catch @panic("TODO"),
+                self.manager.nodes.pop() catch @panic("TODO"),
+            )) catch @panic("TODO");
         }
 
-        const name = self.nodes.pop() catch unreachable;
-
-        self.nodes.push(node.Node { .Construct = self.arena.create(node.Construct, node.Construct.new(name, values.array(self.arena))) catch @panic("TODO") }) catch @panic("TODO");
+        util.assert(self.nodes.len > 0);
+        self.manager.nodes.push(node.Node{
+            .Construct = node.Construct.new(index),
+        }) catch @panic("TODO");
     }
 
     fn call(self: *Parser, tokenizer: *lexer.Lexer) void {
-        var arguments = collections.Vec(node.Node).new(ARGUMENT_MAX, self.arena) catch @panic("TODO");
+        const index = self.manager.call_arguments.start();
 
         while (!tokenizer.match(token.Token.PARENTESISRIGHT)) {
             if (!tokenizer.match(token.Token.COMMA) and !tokenizer.previous.eql(token.Token.PARENTESISLEFT)) {
@@ -245,21 +292,20 @@ pub const Parser = struct {
             }
 
             self.parse(.Assignment, tokenizer);
-            arguments.push(self.nodes.pop() catch @panic("TODO")) catch @panic("TODO");
+            self.manager.call_arguments.push(self.nodes.pop() catch @panic("TODO")) catch @panic("TODO");
         }
 
-        const name = self.nodes.pop() catch @panic("TODO");
-
-        self.nodes.push(node.Node {.Call = self.arena.create(node.Call, node.Call.new(name, arguments.array(self.arena))) catch @panic("TODO")}) catch @panic("TODO");
+        self.manager.nodes.push(node.Node{
+            .Call = node.Call.new(index),
+        }) catch @panic("TODO");
     }
 
     fn typ(self: *Parser, tokenizer: *lexer.Lexer) void {
         const name = tokenizer.current;
+
         if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
 
-        var fields = collections.Vec(node.Type.Field).new(ARGUMENT_MAX, self.arena);
-        var size: ?u32 = null;
-
+        // var fields = collections.Vec(node.Type.Field).new(ARGUMENT_MAX, self.arena) catch @panic("TODO");
         if (tokenizer.match(token.Token.BRACELEFT)) {
             while (!tokenizer.match(token.Token.BRACERIGHT)) {
                 const field_name = tokenizer.current;
@@ -272,7 +318,10 @@ pub const Parser = struct {
                 if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
                 if (!tokenizer.match(token.Token.COMMA)) @panic("TODO");
 
-                fields.push(node.Type.Field.new(field_name.Identifier, field_type.Identifier)) catch @panic("TODO");
+                self.manager.type_fields.push(node.Type.Field.new(
+                    self.manager.words.push(field_name.Identifier) catch @panic("TODO"),
+                    self.manager.words.push(field_type.Identifier) catch @panic("TODO"),
+                )) catch @panic("TODO");
             }
         } else {
             if (!tokenizer.match(token.Token.EQUAL)) @panic("TODO");
@@ -281,19 +330,25 @@ pub const Parser = struct {
             if (!tokenizer.match(token.Token.NUMBER)) @panic("TODO");
             if (!tokenizer.match(token.Token.SEMICOLON)) @panic("TODO");
 
-            size = type_size.Number;
+            self.nodes.push(node.Node{ .Number = node.Number.new(
+                self.manager.words.push(type_size.Number) catch @panic("TODO"),
+            ) }) catch @panic("TODO");
         }
 
-        self.nodes.push(node.Node { .Type = self.arena.create(node.Type, node.Type.new(name.Identifier, fields.array(self.arena, size)) catch @panic("TODO"))}) catch @panic("TODO");
+        self.nodes.push(node.Node{ .Type = node.Type.new(
+            self.manager.words.push(name.Identifier) catch @panic("TODO"),
+        ) }) catch @panic("TODO");
     }
 
     fn property(self: *Parser, tokenizer: *lexer.Lexer) void {
         const name = tokenizer.current;
         if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
 
-        const n = self.nodes.pop() catch @panic("TODO");
+        // const n = self.nodes.pop() catch @panic("TODO");
 
-        self.nodes.push(node.Node { .Property = self.arena.create(node.Property, node.Property.new(n, name.Identifier)) catch @panic("TODO")}) catch @panic("TODO");
+        self.nodes.push(node.Node{
+            .Property = node.Property.new(self.manager.words.push(name.Identifier) catch @panic("TODO")),
+        }) catch @panic("TODO");
     }
 
     fn procedure(self: *Parser, tokenizer: *lexer.Lexer) void {
@@ -301,8 +356,6 @@ pub const Parser = struct {
 
         if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
         if (!tokenizer.match(token.Token.PARENTESISLEFT)) @panic("TODO");
-
-        var parameters = collections.Vec(node.Procedure.Parameter).new(ARGUMENT_MAX, self.arena) catch @panic("TODO");
 
         while (!tokenizer.match(token.Token.PARENTESISRIGHT)) {
             if (!tokenizer.match(token.Token.COMMA) and !tokenizer.previous.eql(token.Token.PARENTESISLEFT)) {
@@ -318,7 +371,10 @@ pub const Parser = struct {
 
             if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
 
-            parameters.push(node.Procedure.Parameter.new(param.Identifier, kind.Identifier)) catch @panic("TODO");
+            self.manager.parameters.push(node.Procedure.Parameter.new(
+                self.manager.words.push(param.Identifier) catch @panic("TODO"),
+                self.manager.words.push(kind.Identifier) catch @panic("TODO"),
+            )) catch @panic("TODO");
         }
 
         if (!tokenizer.match(token.Token.DOUBLECOLON)) @panic("TODO");
@@ -330,14 +386,16 @@ pub const Parser = struct {
 
         self.scope(tokenizer);
 
-        const scp = self.nodes.pop() catch @panic("TODO");
-
-        self.nodes.push(node.Node { .Procedure = self.arena.create(node.Procedure, node.Procedure.new(name.Identifier, return_type.Identifier, parameters.array(self.arena), scp)) catch @panic("TODO")}) catch @panic("TODO");
+        self.manager.nodes.push(node.Node{ .Procedure = node.Procedure.new(
+            self.manager.words.push(name.Identifier) catch @panic("TODO"),
+            self.manager.words.push(return_type.Identifier) catch @panic("TODO"),
+        ) }) catch @panic("TODO");
     }
 
     fn let(self: *Parser, tokenizer: *lexer.Lexer) void {
         const iden = tokenizer.current;
         const mutable = tokenizer.match(token.Token.MUT);
+        _ = mutable;
 
         if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
         if (!tokenizer.match(token.Token.DOUBLECOLON)) @panic("TODO");
@@ -351,9 +409,12 @@ pub const Parser = struct {
 
         if (!tokenizer.match(token.Token.SEMICOLON)) @panic("TODO");
 
-        const value = self.nodes.pop() catch @panic("TODO");
+        // const value = self.nodes.pop() catch @panic("TODO");
 
-        self.nodes.push(node.Node {.Let = self.arena.create(node.Let, node.Let.new(iden.Identifier, kind.Identifier, value, mutable)) catch @panic("TODO")}) catch @panic("TODO");
+        self.nodes.push(node.Node{ .Let = node.Let.new(
+            self.manager.words.push(iden.Identifier) catch @panic("TODO"),
+            self.manager.words.push(kind.Identifier) catch @panic("TODO"),
+        ) }) catch @panic("TODO");
     }
 
     fn string(self: *Parser, tokenizer: *lexer.Lexer) void {
@@ -363,48 +424,27 @@ pub const Parser = struct {
     }
 
     fn scope(self: *Parser, tokenizer: *lexer.Lexer) void {
-        var value: ?node.Node = null;
-        var nodes = collections.Vec(node.Node).new(ARGUMENT_MAX, self.arena) catch @panic("TODO");
+        var len: util.Index = 0;
 
         while (!tokenizer.match(token.Token.BRACERIGHT)) {
-            switch (tokenizer.current) {
-                .Keyword => |keyword| switch (keyword) {
-                    .Let => {
-                        tokenizer.advance();
-                        self.let(tokenizer);
-                    },
-                    else => @panic("TODO"),
-                },
+            self.parse(.Assignment, tokenizer);
 
-                else => {
-                    self.parse(.Assignment, tokenizer);
-
-                    if (!tokenizer.previous.eql(token.Token.SEMICOLON)) {
-                        if (tokenizer.match(token.Token.BRACERIGHT)) {
-                            value = self.nodes.pop() catch @panic("TODO");
-
-                            break;
-                        }
-                    }
-                },
-            }
-
-            nodes.push(self.nodes.pop() catch @panic("TODO")) catch @panic("TODO");
+            len += 1;
         }
 
-        self.nodes.push(node.Node {.Scope = self.arena.create(node.Scope, node.Scope.new(nodes.array(self.arena), value)) catch @panic("TODO")}) catch @panic("TODO");
+        self.nodes.push(node.Node {.Scope = node.Scope.new(len)}) catch @panic("TODO");
     }
 
     fn parse(self: *Parser, precedence: Precedence, tokenizer: *lexer.Lexer) void {
         tokenizer.advance();
 
-        if (self.rules.items[RuleKind.from_token(tokenizer.previous)].prefix) |prefix| {
+        if (self.rules.items[Rule.Kind.from_token(tokenizer.previous)].prefix) |prefix| {
             prefix(self, tokenizer);
         } else {
             @panic("TODO: Show error");
         }
 
-        var r = self.rules.items[RuleKind.from_token(tokenizer.current)];
+        var r = self.rules.items[Rule.Kind.from_token(tokenizer.current)];
 
         while (@intFromEnum(precedence) <= @intFromEnum(r.precedence)) {
             if (r.infix) |infix| {
@@ -414,7 +454,7 @@ pub const Parser = struct {
                 break;
             }
 
-            r = self.rules.items[RuleKind.from_token(tokenizer.current)];
+            r = self.rules.items[Rule.Kind.from_token(tokenizer.current)];
         }
     }
 
@@ -426,7 +466,7 @@ pub const Parser = struct {
 
     pub fn deinit(self: *Parser) void {
         self.rules.deinit(self.arena);
-        self.nodes.deinit(self.arena);
+        self.manager.deinit(self.arena);
         self.arena.deinit();
     }
 };

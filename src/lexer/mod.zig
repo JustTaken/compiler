@@ -5,7 +5,7 @@ const collections = @import("collections");
 pub const token = @import("token.zig");
 
 pub const Lexer = struct {
-    words: collections.String,
+    words: collections.SliceManager(u8),
     content: collections.String,
 
     previous: token.Token,
@@ -36,7 +36,7 @@ pub const Lexer = struct {
 
         const free_space = self.arena.capacity - self.arena.usage;
 
-        self.words = try collections.String.new(free_space >> 1, self.arena);
+        self.words = try collections.SliceManager(u8).new(free_space >> 2, self.arena);
         errdefer self.words.deinit(self.arena);
 
         self.content = try collections.String.new(free_space >> 1, self.arena);
@@ -100,21 +100,20 @@ pub const Lexer = struct {
                     self.offset += 1;
                 }
 
-                const string = self.content.range(util.Range.new(self.start, self.offset)) catch unreachable;
+                const string = self.content.slice(collections.Slice.new(@intCast(self.start), @intCast(self.offset - self.start))) catch unreachable;
 
-                self.current = token.Token{ .Number = util.parse(string) };
+                self.current = token.Token{ .Number = self.words.push(string) catch @panic("TODO") };
             } else if (util.is_alpha(c)) {
                 while (!self.at_end() and util.is_ascci(self.content.value(self.offset) catch unreachable)) {
                     self.offset += 1;
                 }
 
-                const string = self.content.range(util.Range.new(self.start, self.offset)) catch unreachable;
+                const string = self.content.slice(collections.Slice.new(@intCast(self.start), @intCast(self.offset - self.start))) catch unreachable;
 
                 if (token.Keyword.from_string(string)) |keyword| {
                     self.current = token.Token{ .Keyword = keyword };
                 } else {
-                    const range = self.words.extend_range(string) catch @panic("TODO");
-                    self.current = token.Token{ .Identifier = self.words.range(range) catch unreachable };
+                    self.current = token.Token{ .Identifier = self.words.push(string) catch @panic("TODO") };
                 }
             } else {
                 switch (c) {
@@ -181,20 +180,14 @@ pub const Lexer = struct {
 
                         self.offset += 1;
 
-                        const range = self.words.extend_range(
-                            self.content.range(util.Range.new(self.start + 1, self.offset - 1)) catch unreachable,
-                        ) catch @panic("TODO");
-
-                        self.current = token.Token{ .String = self.words.range(range) catch unreachable };
+                        const content = self.content.slice(collections.Slice.new(@intCast(self.start + 1), @intCast(self.offset - self.start))) catch unreachable;
+                        self.current = token.Token{ .String = self.words.push(content) catch unreachable };
                     },
                     else => @panic("TODO"),
                 }
             }
         }
     }
-
-    // try to rtemove this later
-    // Try to remove this later
 
     pub fn next(self: *Lexer) ?token.Token {
         self.advance();

@@ -22,7 +22,7 @@ pub const TypeChecker = struct {
     pub fn new(allocator: *mem.Arena) error{OutOfMemory}!TypeChecker {
         var self: TypeChecker = undefined;
 
-        self.arena = try allocator.child("TypeChecker", mem.PAGE_SIZE * 2);
+        self.arena = try allocator.child("TypeChecker", mem.PAGE_SIZE);
         errdefer self.arena.deinit();
 
         // self.parameters = try collections.Vec(*const constant.ConstantType).new(VARIABLE_MAX, self.arena);

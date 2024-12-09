@@ -4,6 +4,8 @@ const collections = @import("collections");
 
 const Parser = @import("parser.zig").Parser;
 const Lexer = @import("lexer/mod.zig").Lexer;
+const TypeChecker = @import("checker/mod.zig").TypeChecker;
+const Generator = @import("generator/mod.zig").Generator;
 
 const DEFAULT_PATH: [:0]const u8 = "a.out";
 
@@ -19,7 +21,7 @@ pub fn start() !void {
     const input = command_line.input_path orelse return error.MissingInputFile;
     const output = command_line.output_path orelse DEFAULT_PATH;
 
-    var arena = try mem.Arena.new("Main", 4);
+    var arena = try mem.Arena.new("Main", 5);
     defer arena.deinit();
 
     try util.Logger.set_buffer(mem.PAGE_SIZE, &arena);
@@ -31,10 +33,18 @@ pub fn start() !void {
     var lexer = try Lexer.new(input_file.stream(), &arena);
     defer lexer.deinit();
 
+    var checker = try TypeChecker.new(&arena);
+    defer checker.deinit();
+
+    var generator = try Generator.new(&arena);
+    defer generator.deinit();
+
     var parser = try Parser.new(&arena);
     defer parser.deinit();
 
-    // while (parser.next()) {}
+    // while (parser.next(&lexer)) |node| {
+    //     _ = node;
+    // }
 
     var output_file = try collections.File.create(output);
     defer output_file.close();

@@ -2,6 +2,8 @@ const std = @import("std");
 const collections = @import("collections");
 const mem = @import("mem");
 
+pub const Index = u8;
+
 pub const Range = struct {
     start: u32,
     end: u32,
