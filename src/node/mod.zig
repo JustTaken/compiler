@@ -115,9 +115,9 @@ pub const Type = struct {
 };
 
 pub const Number = struct {
-    value: collections.Slice,
+    value: util.Index,
 
-    pub fn new(value: collections.Slice) Number {
+    pub fn new(value: util.Index) Number {
         return Number {
             .value = value,
         };
@@ -125,9 +125,9 @@ pub const Number = struct {
 };
 
 pub const Identifier = struct {
-    name: collections.Slice,
+    name: util.Index,
 
-    pub fn new(name: collections.Slice) Identifier {
+    pub fn new(name: util.Index) Identifier {
         return Identifier {
             .name = name,
         };
@@ -159,9 +159,8 @@ pub const Construct = struct {
         }
     };
 
-    pub fn new(name: util.Index, values: util.Index) Construct {
+    pub fn new(values: util.Index) Construct {
         return Construct {
-            .name = name,
             .values = values,
         };
     }
@@ -169,7 +168,6 @@ pub const Construct = struct {
 
 pub const Procedure = struct {
     name: util.Index,
-    typ: util.Index,
 
     pub const Parameter = struct {
         name: util.Index,
@@ -183,34 +181,29 @@ pub const Procedure = struct {
         }
     };
 
-    pub fn new(name: util.Index, typ: util.Index) Procedure {
+    pub fn new(name: util.Index) Procedure {
         return Procedure {
             .name = name,
-            .typ = typ,
         };
     }
 };
 
 pub const Let = struct {
     name: util.Index,
-    typ: util.Index,
-    // value: collections.Index,
-    // mut: bool,
 
-    pub fn new(name: util.Index, typ: util.Index) Let {
+    pub fn new(name: util.Index) Let {
         return Let {
             .name = name,
-            .typ = typ,
-        };        
+        };
     }
 };
 
 pub const Call = struct {
-    arguments: util.Index,
+    len: util.Index,
 
-    pub fn new(arguments: util.Index) Call {
+    pub fn new(len: util.Index) Call {
         return Call {
-            .arguments = arguments,
+            .len = len,
         };
     }
 };

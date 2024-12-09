@@ -388,7 +388,6 @@ pub fn SliceManager(T: type) type {
     return struct {
         slices: Vec(Slice),
         buffer: Vec(T),
-        index: usize,
 
         const Self = @This();
 
@@ -396,7 +395,6 @@ pub fn SliceManager(T: type) type {
             return Self {
                 .slices = try Vec(Slice).new(size >> 2, allocator),
                 .buffer = try Vec(T).new(size, allocator),
-                .index = 0,
             };
         }
 
@@ -407,7 +405,6 @@ pub fn SliceManager(T: type) type {
 
             try self.buffer.extend(items);
             try self.slices.push(Slice.new(ptr, len));
-            self.index += 1;
 
             return index;
         }
@@ -417,7 +414,6 @@ pub fn SliceManager(T: type) type {
             const ptr: u8 = @intCast(self.buffer.len);
 
             try self.slices.push(Slice.new(ptr, 0));
-            self.index += 1;
 
             return index;
         }
@@ -427,15 +423,10 @@ pub fn SliceManager(T: type) type {
             return try self.buffer.slice(slice);
         }
 
-        pub fn extend(self: *const Self, item: T) error{OutOfBounds}!void {
+        pub fn extend(self: *Self, item: T) error{OutOfBounds}!void {
             try self.buffer.push(item);
-            const last = self.slices.get(self.index).len;
-            last += 1;
-        }
-
-        pub fn pop(self: *Self) error{OutOfBounds}!void {
-            if (self.index == 0) return error.OutOfBounds;
-            self.index -= 1;
+            const last = try self.slices.last();
+            last.len += 1;
         }
 
         pub fn deinit(self: *Self, arena: *mem.Arena) void {

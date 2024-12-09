@@ -42,9 +42,9 @@ pub fn start() !void {
     var parser = try Parser.new(&arena);
     defer parser.deinit();
 
-    // while (parser.next(&lexer)) |node| {
-    //     _ = node;
-    // }
+    while (parser.next(&lexer)) |node| {
+        _ = node;
+    }
 
     var output_file = try collections.File.create(output);
     defer output_file.close();

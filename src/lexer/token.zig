@@ -95,28 +95,45 @@ pub const Operator = enum {
     }
 };
 
-const TokenKind = enum {
+pub const TokenKind = enum {
+    Eof,
     Identifier,
     String,
     Number,
     Keyword,
-    Operator,
     Symbol,
-    Eof,
+    Operator,
 };
 
 pub const Token = union(TokenKind) {
+    Eof,
     Identifier: util.Index,
     String: util.Index,
     Number: util.Index,
     Keyword: Keyword,
-    Operator: Operator,
     Symbol: Symbol,
+    Operator: Operator,
 
-    Eof,
+    // comptime {
+    //     const actual_fields = @typeInfo(TokenKind).@"enum".fields;
+    //     const expected_fields = [_] TokenKind {
+    //         .Identifier, .String, .Number, .Keyword, .Operator, .Symbol, .Eof
+    //     };
+
+    //     if (actual_fields.len != expected_fields.len) @compileError("Out of date, be carefull with updating this because of the  location")
+
+    //     for () |field| {
+    //     }
+    //     if (@intFromEnum(TokenKind.Identifier) != 0) ;
+    //     if (@intFromEnum(TokenKind.String) != 1) @compileError("Incorrect variant location");
+    //     if (@intFromEnum(TokenKind.) != 0) @compileError("Incorrect variant location");
+    //     if (@intFromEnum(TokenKind.Identifier) != 0) @compileError("Incorrect variant location");
+    // }
 
     pub const IDEN: Token = Token{ .Identifier = 0 };
     pub const NUMBER: Token = Token{ .Number = 0 };
+    pub const STRING: Token = Token{ .String = 0 };
+
     pub const PARENTESISLEFT: Token = Token{ .Symbol = Symbol.ParentesisLeft };
     pub const PARENTESISRIGHT: Token = Token{ .Symbol = Symbol.ParentesisRight };
     pub const COMMA: Token = Token{ .Symbol = Symbol.Comma };
@@ -126,8 +143,20 @@ pub const Token = union(TokenKind) {
     pub const BRACERIGHT: Token = Token{ .Symbol = Symbol.CurlyBracketRight };
     pub const EQUAL: Token = Token{ .Symbol = Symbol.Equal };
     pub const ARROW: Token = Token{ .Symbol = Symbol.Arrow };
-    pub const PLUS: Token = Token{ .Operator = Operator.Plus };
     pub const SEMICOLON: Token = Token{ .Symbol = Symbol.Semicolon };
+
+    pub const BANG: Token = Token{ .Operator = Operator.Bang };
+    pub const BANGEQUAL: Token = Token{ .Operator = Operator.BangEqual };
+    pub const EQUALEQUAL: Token = Token{ .Operator = Operator.EqualEqual };
+    pub const PLUS: Token = Token{ .Operator = Operator.Plus };
+    pub const MINUS: Token = Token{ .Operator = Operator.Minus };
+    pub const STAR: Token = Token{ .Operator = Operator.Star };
+    pub const SLASH: Token = Token{ .Operator = Operator.Slash };
+    pub const GREATER: Token = Token{ .Operator = Operator.Greater };
+    pub const GREATEREQUAL: Token = Token{ .Operator = Operator.GreaterEqual };
+    pub const LESS: Token = Token{ .Operator = Operator.Less };
+    pub const LESSEQUAL: Token = Token{ .Operator = Operator.LessEqual };
+
     pub const TYPE: Token = Token{ .Keyword = Keyword.Type };
     pub const PROC: Token = Token{ .Keyword = Keyword.Procedure };
     pub const LET: Token = Token{ .Keyword = Keyword.Let };
@@ -135,6 +164,7 @@ pub const Token = union(TokenKind) {
     pub const OF: Token = Token{ .Keyword = Keyword.Of };
     pub const TRUE: Token = Token{ .Keyword = Keyword.True };
     pub const FALSE: Token = Token{ .Keyword = Keyword.False };
+
     pub const EOF: Token = Token.Eof;
 
     pub fn print(self: Token, formater: util.Formater) void {
@@ -179,4 +209,43 @@ pub const Token = union(TokenKind) {
         }
     }
 };
+
+fn variant_offset(comptime t: TokenKind) usize {
+    comptime var len: usize = 0;
+    const p = @intFromEnum(t);
+    const fields = @typeInfo(Token).@"union".fields;
+
+    inline for (0..p) |index| {
+        const field = @typeInfo(fields[index].type);
+
+        if (field == .@"enum") {
+            const l = field.@"enum".fields.len;
+
+            if (l > 0) {
+                len += l - 1;
+            }
+        }
+    }
+
+    return len;
+}
+
+pub fn identity_int(_: Token, i: usize) usize {
+    return i;
+}
+
+pub fn keyword_int(t: Token, i: usize) usize {
+    const v: usize = @intFromEnum(t.Keyword) + variant_offset(TokenKind.Keyword);
+    return i + v;
+}
+
+pub fn operator_int(t: Token, i: usize) usize {
+    const v: usize = @intFromEnum(t.Operator) + variant_offset(TokenKind.Operator);
+    return i + v;
+}
+
+pub fn symbol_int(t: Token, i: usize) usize {
+    const v: usize = @intFromEnum(t.Symbol) + variant_offset(TokenKind.Symbol);
+    return i + v;
+}
 

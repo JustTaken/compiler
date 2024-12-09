@@ -199,16 +199,6 @@ pub const Lexer = struct {
         return self.current;
     }
 
-    // pub fn prev(ptr: *anyopaque) token.Token {
-    //     const self: *Lexer = @ptrCast(@alignCast(ptr));
-    //     return self.previous;
-    // }
-
-    // pub fn actual(ptr: *anyopaque) token.Token {
-    //     const self: *Lexer = @ptrCast(@alignCast(ptr));
-    //     return self.current;
-    // }
-
     pub fn match(self: *Lexer, t: token.Token) bool {
         if (self.current.eql(t)) {
             self.advance();
