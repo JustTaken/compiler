@@ -1,3 +1,0 @@
-[submodule "lib/tracy"]
-	path = lib/tracy
-	url = git@github.com:cipharius/zig-tracy.git
