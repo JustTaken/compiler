@@ -57,8 +57,6 @@ pub fn start() !void {
 
     var output_file = try collections.File.create(output);
     defer output_file.close();
-
-    // parser.compile(output_file.stream());
 }
 
 test "main test" {
