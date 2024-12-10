@@ -8,6 +8,9 @@ pub const Keyword = enum {
     Mut,
 
     pub fn print(self: Keyword, formater: util.Formater) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Keyword::print"});
+        defer zone.deinit();
+
         switch (self) {
             .Let => formater("Keyword::Let", .{}),
             .Type => formater("Keyword::Type", .{}),
@@ -17,6 +20,9 @@ pub const Keyword = enum {
     }
 
     pub fn from_string(string: []const u8) ?Keyword {
+        const zone = util.tracy.initZone(@src(), .{.name = "Keyword::from_string"});
+        defer zone.deinit();
+
         if (string.len <= 1) return null;
 
         switch (string[0]) {
@@ -50,6 +56,9 @@ pub const Symbol = enum {
     Dot,
 
     pub fn print(self: Symbol, formater: util.Formater) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Symbol::print"});
+        defer zone.deinit();
+
         switch (self) {
             .Equal => formater("Symbol::Equal", .{}),
             .ParentesisLeft => formater("Symbol::ParentesisLeft", .{}),
@@ -79,6 +88,9 @@ pub const Operator = enum {
     EqualEqual,
 
     pub fn print(self: Operator, formater: util.Formater) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Operator::print"});
+        defer zone.deinit();
+
         switch (self) {
             .Plus => formater("Operator::Plus", .{}),
             .Minus => formater("Operator::Minus", .{}),
@@ -168,6 +180,9 @@ pub const Token = union(TokenKind) {
     pub const EOF: Token = Token.Eof;
 
     pub fn print(self: Token, formater: util.Formater) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Token::print"});
+        defer zone.deinit();
+
         switch (self) {
             .Eof => formater("Token::Eof", .{}),
             .Identifier => formater("Token::Identifier", .{}),
@@ -180,6 +195,9 @@ pub const Token = union(TokenKind) {
     }
 
     pub fn eql(self: Token, other: Token) bool {
+        const zone = util.tracy.initZone(@src(), .{.name = "Token::eql"});
+        defer zone.deinit();
+
         switch (self) {
             .Eof => return @as(TokenKind, other) == .Eof,
             .Identifier => return @as(TokenKind, other) == .Identifier,
@@ -211,6 +229,9 @@ pub const Token = union(TokenKind) {
 };
 
 fn variant_offset(comptime t: TokenKind) usize {
+    const zone = util.tracy.initZone(@src(), .{.name = "variant_offset"});
+    defer zone.deinit();
+
     comptime var len: usize = 0;
     const p = @intFromEnum(t);
     const fields = @typeInfo(Token).@"union".fields;
@@ -231,20 +252,32 @@ fn variant_offset(comptime t: TokenKind) usize {
 }
 
 pub fn identity_int(_: Token, i: usize) usize {
+    const zone = util.tracy.initZone(@src(), .{.name = "identity_int"});
+    defer zone.deinit();
+
     return i;
 }
 
 pub fn keyword_int(t: Token, i: usize) usize {
+    const zone = util.tracy.initZone(@src(), .{.name = "keyword_int"});
+    defer zone.deinit();
+
     const v: usize = @intFromEnum(t.Keyword) + variant_offset(TokenKind.Keyword);
     return i + v;
 }
 
 pub fn operator_int(t: Token, i: usize) usize {
+    const zone = util.tracy.initZone(@src(), .{.name = "operator_int"});
+    defer zone.deinit();
+
     const v: usize = @intFromEnum(t.Operator) + variant_offset(TokenKind.Operator);
     return i + v;
 }
 
 pub fn symbol_int(t: Token, i: usize) usize {
+    const zone = util.tracy.initZone(@src(), .{.name = "symbol_int"});
+    defer zone.deinit();
+
     const v: usize = @intFromEnum(t.Symbol) + variant_offset(TokenKind.Symbol);
     return i + v;
 }

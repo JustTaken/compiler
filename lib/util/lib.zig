@@ -2,6 +2,9 @@ const std = @import("std");
 const collections = @import("collections");
 const mem = @import("mem");
 
+pub const tracy = @import("tracy");
+pub const tracyc = tracy.c;
+
 pub const Index = u8;
 
 pub const Range = struct {
@@ -37,7 +40,11 @@ pub const Logger = struct {
 
     const BACKUP_BUFFER_LEN: usize = 1024;
     var backup_array: [BACKUP_BUFFER_LEN]u8 = undefined;
-    var backup_buffer = collections.String.from_buffer(&backup_array);
+    var backup_buffer = collections.String {
+        .items = &backup_array,
+        .capacity = @intCast(BACKUP_BUFFER_LEN),
+        .len = 0,
+    };
 
     var buffer: collections.String = undefined;
 
@@ -48,6 +55,9 @@ pub const Logger = struct {
     }
 
     pub fn format(comptime fmt: []const u8, args: anytype) error{Overflow}!void {
+        const zone = tracy.initZone(@src(), .{.name = "Logger::format"});
+        defer zone.deinit();
+
         const ArgsType = @TypeOf(args);
         const args_type_info = @typeInfo(ArgsType);
 
@@ -103,6 +113,9 @@ pub const Logger = struct {
     }
 
     pub fn printf(mode: Level, comptime fmt: []const u8, args: anytype) void {
+        const zone = tracy.initZone(@src(), .{.name = "Logger::printf"});
+        defer zone.deinit();
+
         if (@intFromEnum(mode) > @intFromEnum(level)) return;
 
         buffer = if (normal_buffer.capacity == 0) backup_buffer else normal_buffer;
@@ -120,6 +133,9 @@ pub const Logger = struct {
     }
 
     fn overflow() void {
+        const zone = tracy.initZone(@src(), .{.name = "Logger::Overflow"});
+        defer zone.deinit();
+
         assert(buffer.capacity < 1024);
 
         const message = "BUFFER OVERFLOW!! START OF MESSAGE: {";
@@ -134,10 +150,16 @@ pub const Logger = struct {
     }
 
     pub fn deinit(arena: *mem.Arena) void {
+        const zone = tracy.initZone(@src(), .{.name = "Logger::deinit"});
+        defer zone.deinit();
+
         normal_buffer.deinit(arena);
     }
 
     pub fn parse_int(i: isize) void {
+        const zone = tracy.initZone(@src(), .{.name = "Logger::parse_int"});
+        defer zone.deinit();
+
         var b: [20]u8 = undefined;
 
         var k: usize = 0;
@@ -194,6 +216,9 @@ pub const CommandLineArgument = struct {
     };
 
     fn check_argument(arg: []const u8) error{Argument}!ArgumentKind {
+        const zone = tracy.initZone(@src(), .{.name = "CommandLineArgument::check_argument"});
+        defer zone.deinit();
+
         if (arg.len == 0) return error.Argument;
         if (arg[0] == '-') return ArgumentKind.Command;
 
@@ -205,6 +230,9 @@ pub const CommandLineArgument = struct {
     }
 
     fn check_command(arg: []const u8) error{Command}!Command {
+        const zone = tracy.initZone(@src(), .{.name = "CommandLineArgument::check_command"});
+        defer zone.deinit();
+
         if (arg.len == 1) {
             return error.Command;
         }
@@ -221,6 +249,9 @@ pub const CommandLineArgument = struct {
     }
 
     pub fn new() Error!CommandLineArgument {
+        const zone = tracy.initZone(@src(), .{.name = "CommandLineArgument::new"});
+        defer zone.deinit();
+
         var input_path: ?[]const u8 = null;
         var output_path: ?[]const u8 = null;
         var log: ?Logger.Level = null;
@@ -290,6 +321,9 @@ pub const DeltaTime = struct {
     const SECOND_TO_NANO: usize = 1000_000_000;
 
     pub fn from_nano(nano: usize) DeltaTime {
+        const zone = tracy.initZone(@src(), .{.name = "DeltaTime::from_nano"});
+        defer zone.deinit();
+
         if (nano < MICRO_TO_NANO) {
             return DeltaTime{
                 .kind = .NanoSeconds,
@@ -324,13 +358,19 @@ pub const DeltaTime = struct {
 
 pub const print = Logger.printf;
 
+// pub fn location(module: [:0]const u8, file: [:0]const u8, fn_name: [:0]const u8)
+
 pub fn time(f: fn () anyerror!void) !void {
     const start = try std.time.Instant.now();
     try f();
+
     DeltaTime.from_nano((try std.time.Instant.now()).since(start)).show();
 }
 
 pub fn convert(input: [*:0]u8) []const u8 {
+    const zone = tracy.initZone(@src(), .{.name = "util::convert"});
+    defer zone.deinit();
+
     var len: usize = 0;
 
     while (input[len] != 0) {
@@ -341,6 +381,9 @@ pub fn convert(input: [*:0]u8) []const u8 {
 }
 
 pub fn is_number(string: []const u8) bool {
+    const zone = tracy.initZone(@src(), .{.name = "util::is_number"});
+    defer zone.deinit();
+
     for (string) |c| {
         if (!is_digit(c)) return false;
     }
@@ -349,16 +392,25 @@ pub fn is_number(string: []const u8) bool {
 }
 
 pub fn min(one: usize, two: usize) u32 {
+    const zone = tracy.initZone(@src(), .{.name = "util::min"});
+    defer zone.deinit();
+
     if (one < two) return @intCast(one);
     return @intCast(two);
 }
 
 pub fn max(one: usize, two: usize) u32 {
+    const zone = tracy.initZone(@src(), .{.name = "util::max"});
+    defer zone.deinit();
+
     if (one > two) return @intCast(one);
     return @intCast(two);
 }
 
 pub fn hash(string: []const u8) u32 {
+    const zone = tracy.initZone(@src(), .{.name = "util::hash"});
+    defer zone.deinit();
+
     var h: usize = 0;
     for (string, 0..) |char, i| {
         h += char + i;
@@ -368,6 +420,9 @@ pub fn hash(string: []const u8) u32 {
 }
 
 pub fn parse(string: []const u8) usize {
+    const zone = tracy.initZone(@src(), .{.name = "util::parse"});
+    defer zone.deinit();
+
     var number: usize = 0;
     var multiply: usize = 1;
 
@@ -380,18 +435,30 @@ pub fn parse(string: []const u8) usize {
 }
 
 pub fn is_digit(char: u8) bool {
+    const zone = tracy.initZone(@src(), .{.name = "util::is_digit"});
+    defer zone.deinit();
+
     return char >= '0' and char <= '9';
 }
 
 pub fn is_alpha(char: u8) bool {
+    const zone = tracy.initZone(@src(), .{.name = "util::is_alpha"});
+    defer zone.deinit();
+
     return (char >= 'A' and char <= 'Z') or (char >= 'a' and char <= 'z') or char == '_';
 }
 
 pub fn is_ascci(char: u8) bool {
+    const zone = tracy.initZone(@src(), .{.name = "util::is_ascci"});
+    defer zone.deinit();
+
     return is_alpha(char) or is_digit(char);
 }
 
 pub fn assert(flag: bool) void {
+    const zone = tracy.initZone(@src(), .{.name = "util::assert"});
+    defer zone.deinit();
+
     if (!flag) {
         unreachable;
     }

@@ -30,6 +30,9 @@ pub const Node = union(NodeKind) {
     Number: Number,
 
     // pub fn deinit(self: Node, arena: *mem.Arena) void {
+        // const zone = util.tracy.initZone(@src(), .{.name = "Generator::deinit"});
+        // defer zone.deinit();
+
     //     switch (self) {
     //         .Type => |typ| {
     //             typ.fields.deinit(arena);
@@ -100,6 +103,9 @@ pub const Type = struct {
         typ: util.Index,
 
         pub fn new(name: util.Index, typ: util.Index) Field {
+            const zone = util.tracy.initZone(@src(), .{.name = "Field::new"});
+            defer zone.deinit();
+
             return Field {
                 .name = name,
                 .typ = typ,
@@ -108,6 +114,9 @@ pub const Type = struct {
     };
 
     pub fn new(name: util.Index) Type {
+        const zone = util.tracy.initZone(@src(), .{.name = "Type::new"});
+        defer zone.deinit();
+
         return Type {
             .name = name,
         };
@@ -118,6 +127,9 @@ pub const Number = struct {
     value: util.Index,
 
     pub fn new(value: util.Index) Number {
+        const zone = util.tracy.initZone(@src(), .{.name = "Number::new"});
+        defer zone.deinit();
+
         return Number {
             .value = value,
         };
@@ -128,6 +140,9 @@ pub const Identifier = struct {
     name: util.Index,
 
     pub fn new(name: util.Index) Identifier {
+        const zone = util.tracy.initZone(@src(), .{.name = "Identifier::new"});
+        defer zone.deinit();
+
         return Identifier {
             .name = name,
         };
@@ -138,6 +153,9 @@ pub const Scope = struct {
     len: util.Index,
 
     pub fn new(len: util.Index) Scope {
+        const zone = util.tracy.initZone(@src(), .{.name = "Scope::new"});
+        defer zone.deinit();
+
         return Scope {
             .len = len,
         };
@@ -149,9 +167,12 @@ pub const Construct = struct {
 
     pub const Value = struct {
         name: util.Index,
-        node: Node,
+        node: util.Index,
 
-        pub fn new(name: util.Index, node: Node) Value {
+        pub fn new(name: util.Index, node: util.Index) Value {
+        const zone = util.tracy.initZone(@src(), .{.name = "Value::new"});
+        defer zone.deinit();
+
             return Value {
                 .name = name,
                 .node = node,
@@ -160,6 +181,9 @@ pub const Construct = struct {
     };
 
     pub fn new(values: util.Index) Construct {
+        const zone = util.tracy.initZone(@src(), .{.name = "Construct::new"});
+        defer zone.deinit();
+
         return Construct {
             .values = values,
         };
@@ -174,6 +198,9 @@ pub const Procedure = struct {
         typ: util.Index,
 
         pub fn new(name: util.Index, typ: util.Index) Parameter {
+        const zone = util.tracy.initZone(@src(), .{.name = "Parameter::new"});
+        defer zone.deinit();
+
             return Parameter {
                 .name = name,
                 .typ = typ,
@@ -182,6 +209,9 @@ pub const Procedure = struct {
     };
 
     pub fn new(name: util.Index) Procedure {
+        const zone = util.tracy.initZone(@src(), .{.name = "Procedure::new"});
+        defer zone.deinit();
+
         return Procedure {
             .name = name,
         };
@@ -192,6 +222,9 @@ pub const Let = struct {
     name: util.Index,
 
     pub fn new(name: util.Index) Let {
+        const zone = util.tracy.initZone(@src(), .{.name = "Let::new"});
+        defer zone.deinit();
+
         return Let {
             .name = name,
         };
@@ -202,6 +235,9 @@ pub const Call = struct {
     len: util.Index,
 
     pub fn new(len: util.Index) Call {
+        const zone = util.tracy.initZone(@src(), .{.name = "Call::new"});
+        defer zone.deinit();
+
         return Call {
             .len = len,
         };
@@ -213,6 +249,9 @@ pub const Property = struct {
     name: util.Index,
 
     pub fn new(name: util.Index) Property {
+        const zone = util.tracy.initZone(@src(), .{.name = "Property::new"});
+        defer zone.deinit();
+
         return Property {
             .name = name,
         };
@@ -228,6 +267,9 @@ pub const Unary = struct {
     };
 
     pub fn new(op: Operator) Unary {
+        const zone = util.tracy.initZone(@src(), .{.name = "Unary::new"});
+        defer zone.deinit();
+
         return Unary {
             .op = op,
         };
@@ -235,8 +277,6 @@ pub const Unary = struct {
 };
 
 pub const Binary = struct {
-    // left: util.Index,
-    // right: util.Index,
     op: Operator,
 
     pub const Operator = enum(u8) { 
@@ -245,6 +285,9 @@ pub const Binary = struct {
     };
 
     pub fn new(op: Operator) Binary {
+        const zone = util.tracy.initZone(@src(), .{.name = "Binary::new"});
+        defer zone.deinit();
+
         return Binary {
             .op = op,
         };

@@ -20,6 +20,9 @@ pub const Lexer = struct {
     arena: *mem.Arena,
 
     pub fn new(stream: collections.Stream(u8), allocator: *mem.Arena) error{OutOfMemory}!Lexer {
+        const zone = util.tracy.initZone(@src(), .{.name = "Lexer::new"});
+        defer zone.deinit();
+
         var self = Lexer{
             .stream = stream,
             .offset = 0,
@@ -48,6 +51,9 @@ pub const Lexer = struct {
     }
 
     fn assert(self: *Lexer, expected: u8) bool {
+        const zone = util.tracy.initZone(@src(), .{.name = "Lexer::assert"});
+        defer zone.deinit();
+
         if (self.content.value(self.offset) catch unreachable == expected) {
             self.offset += 1;
 
@@ -58,6 +64,9 @@ pub const Lexer = struct {
     }
 
     fn at_end(self: *Lexer) bool {
+        const zone = util.tracy.initZone(@src(), .{.name = "Lexer::at_end"});
+        defer zone.deinit();
+
         if (self.offset >= self.content.len) {
             const len = self.offset - self.start;
             const buffer = self.content.items;
@@ -78,6 +87,9 @@ pub const Lexer = struct {
     }
 
     pub fn advance(self: *Lexer) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Lexer::advance"});
+        defer zone.deinit();
+
         self.previous = self.current;
 
         while (!self.at_end()) {
@@ -190,6 +202,9 @@ pub const Lexer = struct {
     }
 
     pub fn next(self: *Lexer) ?token.Token {
+        const zone = util.tracy.initZone(@src(), .{.name = "Lexer::next"});
+        defer zone.deinit();
+
         self.advance();
 
         if (self.current.eql(token.Token.Eof)) {
@@ -200,6 +215,9 @@ pub const Lexer = struct {
     }
 
     pub fn match(self: *Lexer, t: token.Token) bool {
+        const zone = util.tracy.initZone(@src(), .{.name = "Lexer::match"});
+        defer zone.deinit();
+
         if (self.current.eql(t)) {
             self.advance();
 
@@ -209,17 +227,10 @@ pub const Lexer = struct {
         return false;
     }
 
-    // pub fn iter(self: *Lexer) collections.Iter(token.Token) {
-    //     return .{
-    //         .payload = self,
-    //         .next_fn = next,
-    //         .current_fn = actual,
-    //         .match_fn = match,
-    //         .prev_fn = prev,
-    //     };
-    // }
-
     pub fn deinit(self: *Lexer) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Lexer::deinit"});
+        defer zone.deinit();
+
         self.content.deinit(self.arena);
         self.words.deinit(self.arena);
         self.arena.deinit();

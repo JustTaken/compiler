@@ -16,9 +16,17 @@ pub fn build(builder: *Builder) void {
         .root_source_file = builder.path("util/lib.zig"),
     });
 
+    const tracy = builder.dependency("tracy", .{
+        // .target = target,
+        // .optimize = optimize,
+        .tracy_enable = true,
+    });
+
     collections.addImport("mem", mem);
     collections.addImport("util", util);
     mem.addImport("util", util);
     util.addImport("collections", collections);
     util.addImport("mem", mem);
+    util.addImport("tracy", tracy.module("tracy"));
+    util.linkLibrary(tracy.artifact("tracy"));
 }

@@ -2,6 +2,13 @@
     .name = "collections",
     .version = "0.0.1",
 
+    .dependencies = .{
+        .tracy = .{
+            .path = "tracy",
+            .lazy = false,
+        },
+    },
+
     .paths = .{
         "build.zig",
         "build.zig.zon",

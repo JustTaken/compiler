@@ -20,6 +20,7 @@ pub fn build(builder: *Builder) void {
     executable.root_module.addImport("util", lib.module("util"));
     executable.root_module.addImport("collections", lib.module("collections"));
 
+    executable.linkLibCpp();
     builder.installArtifact(executable);
 
     const run_executable = builder.addRunArtifact(executable);

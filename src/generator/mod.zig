@@ -2,7 +2,6 @@ const collections = @import("collections");
 const mem = @import("mem");
 const util = @import("util");
 const elf = @import("elf.zig");
-// const constant = @import("constant.zig");
 
 const BASE_SIZE: u32 = 4;
 
@@ -17,10 +16,16 @@ pub const Register = enum(u8) {
     Rdi,
 
     fn value(self: Register) u8 {
+        const zone = util.tracy.initZone(@src(), .{.name = "Register::value"});
+        defer zone.deinit();
+
         return @intFromEnum(self);
     }
 
     pub fn print(self: Register, formater: util.Formater) error{Overflow}!void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Register::print"});
+        defer zone.deinit();
+
         switch (self) {
             .Rax => try formater("Register::Rax", .{}),
             .Rcx => try formater("Register::Rcx", .{}),
@@ -38,6 +43,9 @@ const Immediate = usize;
 const Offset = usize;
 
 fn to_bytes(int: usize) [8]u8 {
+        const zone = util.tracy.initZone(@src(), .{.name = "to_bytes"});
+        defer zone.deinit();
+
     var bytes: [8]u8 = undefined;
 
     for (0..8) |i| {
@@ -53,6 +61,9 @@ pub const Memory = struct {
     offset: Offset,
 
     pub fn print(self: Memory, formater: util.Formater) error{Overflow}!void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Memory::print"});
+        defer zone.deinit();
+
         try formater("Memory({}, Offset({}))", .{ self.register, self.offset });
     }
 };
@@ -65,10 +76,16 @@ pub const Source = union(SourceKind) {
     Stack,
 
     fn eql(self: Source, other: SourceKind) bool {
+        const zone = util.tracy.initZone(@src(), .{.name = "Source::eql"});
+        defer zone.deinit();
+
         return @as(SourceKind, self) == other;
     }
 
     pub fn print(self: Source, formater: util.Formater) error{Overflow}!void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Source::print"});
+        defer zone.deinit();
+
         return switch (self) {
             .Register => |r| try formater("Source::Register({})", .{r}),
             .Memory => |m| try formater("Source::Memory({})", .{m}),
@@ -85,10 +102,16 @@ pub const Destination = union(DestinationKind) {
     Stack,
 
     fn eql(self: Destination, other: DestinationKind) bool {
+        const zone = util.tracy.initZone(@src(), .{.name = "Destination::eql"});
+        defer zone.deinit();
+
         return @as(DestinationKind, self) == other;
     }
 
     pub fn as_source(self: Destination) Source {
+        const zone = util.tracy.initZone(@src(), .{.name = "Destination::as_source"});
+        defer zone.deinit();
+
         return switch (self) {
             .Register => |r| Source{ .Register = r },
             .Memory => |m| Source{ .Memory = m },
@@ -97,6 +120,9 @@ pub const Destination = union(DestinationKind) {
     }
 
     pub fn print(self: Destination, formater: util.Formater) error{Overflow}!void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Destination::print"});
+        defer zone.deinit();
+
         return switch (self) {
             .Register => |r| try formater("Destination::Register({})", .{r}),
             .Memory => |m| try formater("Destination::Memory({})", .{m}),
@@ -112,6 +138,9 @@ pub const BinaryOperation = struct {
     destination: Destination,
 
     pub fn print(self: BinaryOperation, formater: util.Formater) error{Overflow}!void {
+        const zone = util.tracy.initZone(@src(), .{.name = "BinaryOperation::print"});
+        defer zone.deinit();
+
         switch (self.kind) {
             .Mov => try formater("BinaryOperation::Mov({} -> {})", .{ self.source, self.destination }),
             .Add => try formater("BinaryOperation::Add({} -> {})", .{ self.source, self.destination }),
@@ -121,6 +150,9 @@ pub const BinaryOperation = struct {
     }
 
     fn write_mov(self: BinaryOperation, buffer: *collections.String) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "BinaryOperation::write_mov"});
+        defer zone.deinit();
+
         switch (self.destination) {
             .Stack => switch (self.source) {
                 .Register => |r| buffer.push(0x50 + r.value()) catch @panic("TODO"),
@@ -161,6 +193,9 @@ pub const BinaryOperation = struct {
     }
 
     fn write_add(self: BinaryOperation, buffer: *collections.String) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "BinaryOperation::write_add"});
+        defer zone.deinit();
+
         switch (self.destination) {
             .Register => |rd| switch (self.source) {
                 .Register => |rs| buffer.extend(&.{ 0x01, 0b11000000 + (rs.value() << 3) + rd.value() }) catch @panic("TODO"),
@@ -186,6 +221,9 @@ pub const BinaryOperation = struct {
     }
 
     fn write_sub(self: BinaryOperation, buffer: *collections.String) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "BinaryOperation::write_sub"});
+        defer zone.deinit();
+
         switch (self.destination) {
             .Register => |rd| switch (self.source) {
                 .Register => |rs| buffer.extend(&.{ 0x29, 0b11000000 + (rs.value() << 3) + rd.value() }) catch @panic("TODO"),
@@ -204,6 +242,9 @@ pub const BinaryOperation = struct {
     }
 
     fn write_mul(self: BinaryOperation, buffer: *collections.String) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "BinaryOperation::write_mul"});
+        defer zone.deinit();
+
         switch (self.destination) {
             .Register => |rd| switch (self.source) {
                 .Immediate => |i| buffer.extend(&.{ 0x6B, 0b01101000 + rd.value(), to_bytes(i)[0] }) catch @panic("TODO"),
@@ -244,6 +285,9 @@ pub const Operation = union(OperationKind) {
     Syscall,
 
     pub fn print(self: Operation, formater: util.Formater) error{Overflow}!void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Operation::print"});
+        defer zone.deinit();
+
         switch (self) {
             .Syscall => try formater("Operation::Syscall", .{}),
             .Ret => try formater("Operation::Ret", .{}),
@@ -253,6 +297,9 @@ pub const Operation = union(OperationKind) {
     }
 
     fn write(self: Operation, buffer: *collections.String) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Operation::write"});
+        defer zone.deinit();
+
         util.print(.Info, "{}", .{self});
 
         switch (self) {
@@ -276,6 +323,9 @@ pub const Operation = union(OperationKind) {
     }
 
     pub fn equal(self: Operation, other: Operation) bool {
+        const zone = util.tracy.initZone(@src(), .{.name = "Operation::equal"});
+        defer zone.deinit();
+
         if (@as(OperationKind, self) != @as(OperationKind, other)) return false;
 
         switch (self) {
@@ -346,6 +396,9 @@ pub const Generator = struct {
     //         };
 
     //         fn as_destination(self: Resource) Destination {
+        // const zone = util.tracy.initZone(@src(), .{.name = "as_destination"});
+        // defer zone.deinit();
+
     //             return switch (self.variant) {
     //                 .Register => |register| Destination{ .Register = register },
     //                 .Memory => |memory| Destination{
@@ -356,6 +409,9 @@ pub const Generator = struct {
     //     };
 
     //     fn new(arena: *mem.Arena) error{OutOfMemory}!Manager {
+        // const zone = util.tracy.initZone(@src(), .{.name = "new"});
+        // defer zone.deinit();
+
     //         const usable_registers = &.{
     //             Register.Rcx, Register.Rdi, Register.Rdx, Register.Rbx, Register.Rax,
     //         };
@@ -376,10 +432,16 @@ pub const Generator = struct {
     //     }
 
     //     fn increase(self: *Manager, size: usize) void {
+        // const zone = util.tracy.initZone(@src(), .{.name = "increase"});
+        // defer zone.deinit();
+
     //         self.stack += size;
     //     }
 
     //     fn get(self: *Manager, cons: *const constant.Constant) Destination {
+        // const zone = util.tracy.initZone(@src(), .{.name = "get"});
+        // defer zone.deinit();
+
     //         const inner = cons.get_type().?;
 
     //         const resource = blk: {
@@ -415,6 +477,9 @@ pub const Generator = struct {
     //     }
 
     //     fn get_registry(self: Manager, cons: *const constant.Constant) ?Destination {
+        // const zone = util.tracy.initZone(@src(), .{.name = "get_registry"});
+        // defer zone.deinit();
+
     //         for (self.resources.offset(0) catch unreachable) |resource| {
     //             if (resource.ptr == cons) return resource.as_destination();
     //         }
@@ -423,6 +488,9 @@ pub const Generator = struct {
     //     }
 
     //     fn is_used(self: Manager, register: Register) bool {
+        // const zone = util.tracy.initZone(@src(), .{.name = "is_used"});
+        // defer zone.deinit();
+
     //         for (self.free.offset(0) catch unreachable) |r| {
     //             if (r == register) return false;
     //         }
@@ -431,16 +499,25 @@ pub const Generator = struct {
     //     }
 
     //     fn clear(self: *Manager) void {
+        // const zone = util.tracy.initZone(@src(), .{.name = "clear"});
+        // defer zone.deinit();
+
     //         self.resources.clear();
     //     }
 
     //     fn deinit(self: *Manager, arena: *mem.Arena) void {
+        // const zone = util.tracy.initZone(@src(), .{.name = "deinit"});
+        // defer zone.deinit();
+
     //         self.free.deinit(arena);
     //         self.resources.deinit(arena);
     //     }
     // };
 
     pub fn new(allocator: *mem.Arena) error{OutOfMemory}!Generator {
+        const zone = util.tracy.initZone(@src(), .{.name = "Generator::new"});
+        defer zone.deinit();
+
         var self: Generator = undefined;
 
         self.arena = try allocator.child("Generator", mem.PAGE_SIZE);
@@ -462,6 +539,9 @@ pub const Generator = struct {
     }
 
     // pub fn give_back(self: *Generator, source: Source) Error!void {
+        // const zone = util.tracy.initZone(@src(), .{.name = "Generator::give_back"});
+        // defer zone.deinit();
+
     //     if (@as(SourceKind, source) == SourceKind.Register) {
     //         try self.manager.give_back(source.Register);
     //     } else {
@@ -470,6 +550,9 @@ pub const Generator = struct {
     // }
 
     // pub fn evaluate(self: *Generator, cons: *constant.Constant, kind: BinaryKind, destination: ?Destination) Source {
+        // const zone = util.tracy.initZone(@src(), .{.name = "evaluate"});
+        // defer zone.deinit();
+
     //     switch (cons.*) {
     //         .Number => |n| {
     //             const source = Source{
@@ -680,6 +763,9 @@ pub const Generator = struct {
     // }
 
     // pub fn push_procedure(self: *Generator, return_value: *constant.Constant) void {
+        // const zone = util.tracy.initZone(@src(), .{.name = "push_procedure"});
+        // defer zone.deinit();
+
     //     util.print(.Info, "--------------------- Procedure start () - Offset () ---------------", .{});
 
     //     defer self.operations.clear();
@@ -705,6 +791,9 @@ pub const Generator = struct {
     // }
 
     pub fn generate(self: *Generator, stream: collections.Stream(u8), main_procedure_offset: usize) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Generator::generate"});
+        defer zone.deinit();
+
         const program_end = [_]Operation{
             Operation{ .Call = main_procedure_offset },
             Operation{ .Binary = BinaryOperation{
@@ -750,6 +839,9 @@ pub const Generator = struct {
     }
 
     pub fn deinit(self: *Generator) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Generator::deinit"});
+        defer zone.deinit();
+
         // self.manager.deinit(self.arena);
         self.operations.deinit(self.arena);
         self.data.deinit(self.arena);

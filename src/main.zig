@@ -1,3 +1,4 @@
+const std = @import("std");
 const util = @import("util");
 const mem = @import("mem");
 const collections = @import("collections");
@@ -14,6 +15,14 @@ pub fn main() !void {
 }
 
 pub fn start() !void {
+    util.tracy.setThreadName("Main");
+    defer util.tracy.message("Shutdown");
+
+    std.time.sleep(100000000);
+
+    const zone = util.tracy.initZone(@src(), .{.name = "Main"});
+    defer zone.deinit();
+
     const command_line = try util.CommandLineArgument.new();
 
     util.Logger.level = command_line.log;

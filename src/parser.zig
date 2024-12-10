@@ -31,6 +31,9 @@ const Ruler = struct {
     const I = Iter(token.Token, Rule);
 
     fn new(allocator: *mem.Arena) error{OutOfMemory, OutOfBounds}!Ruler {
+        const zone = util.tracy.initZone(@src(), .{.name = "Ruler::new"});
+        defer zone.deinit();
+
         var self: Ruler = undefined;
         const Ts = [_]type {token.Keyword, token.Symbol, token.Operator};
         const token_kind_len = @typeInfo(token.TokenKind).@"enum".fields.len;
@@ -83,6 +86,9 @@ const Ruler = struct {
     }
 
     fn from_token(self: *const Ruler, t: token.Token) Rule {
+        const zone = util.tracy.initZone(@src(), .{.name = "Ruler::from_token"});
+        defer zone.deinit();
+
         const index = @intFromEnum(t);
         const pos = self.transforms.items[index](t, index);
 
@@ -90,8 +96,11 @@ const Ruler = struct {
     }
 
     fn deinit(self: *Ruler, allocator: *mem.Arena) void {
-        self.callbacks.deinit(allocator);
+        const zone = util.tracy.initZone(@src(), .{.name = "Ruler::deinit"});
+        defer zone.deinit();
+
         self.transforms.deinit(allocator);
+        self.callbacks.deinit(allocator);
     }
 };
 
@@ -101,6 +110,9 @@ const Rule = struct {
     precedence: Precedence,
 
     fn new(prefix: ?Fn, infix: ?Fn, precedence: Precedence) Rule {
+        const zone = util.tracy.initZone(@src(), .{.name = "Rule::new"});
+        defer zone.deinit();
+
         return Rule{
             .prefix = prefix,
             .infix = infix,
@@ -127,6 +139,9 @@ fn Iter(T: type, F: type) type {
             zero: F,
             allocator: *mem.Arena,
         ) error{OutOfMemory, OutOfBounds}!collections.Array(F) {
+            const zone = util.tracy.initZone(@src(), .{.name = "Iter::new"});
+            defer zone.deinit();
+
             var callbacks = try collections.Array(F).new(len, allocator);
             errdefer callbacks.deinit(allocator);
 
@@ -154,18 +169,21 @@ const NodeManager = struct {
     parameters: collections.Vec(node.Procedure.Parameter),
 
     fn new(allocator: *mem.Arena) error{OutOfMemory}!NodeManager {
-        util.print(.Info, "Scope: {}", .{@sizeOf(node.Scope)});
-        util.print(.Info, "Construct: {}", .{@sizeOf(node.Construct)});
-        util.print(.Info, "Let: {}", .{@sizeOf(node.Let)});
-        util.print(.Info, "Call: {}", .{@sizeOf(node.Call)});
-        util.print(.Info, "Binary: {}", .{@sizeOf(node.Binary)});
-        util.print(.Info, "Unary: {}", .{@sizeOf(node.Unary)});
-        util.print(.Info, "Property: {}", .{@sizeOf(node.Property)});
-        util.print(.Info, "Procedure: {}", .{@sizeOf(node.Procedure)});
-        util.print(.Info, "Type: {}", .{@sizeOf(node.Type)});
-        util.print(.Info, "Identifier: {}", .{@sizeOf(node.Identifier)});
-        util.print(.Info, "Number: {}", .{@sizeOf(node.Number)});
-        util.print(.Info, "Node: {}", .{@sizeOf(node.Node)});
+        const zone = util.tracy.initZone(@src(), .{.name = "NodeManager::new"});
+        defer zone.deinit();
+
+        // util.print(.Info, "Scope: {}", .{@sizeOf(node.Scope)});
+        // util.print(.Info, "Construct: {}", .{@sizeOf(node.Construct)});
+        // util.print(.Info, "Let: {}", .{@sizeOf(node.Let)});
+        // util.print(.Info, "Call: {}", .{@sizeOf(node.Call)});
+        // util.print(.Info, "Binary: {}", .{@sizeOf(node.Binary)});
+        // util.print(.Info, "Unary: {}", .{@sizeOf(node.Unary)});
+        // util.print(.Info, "Property: {}", .{@sizeOf(node.Property)});
+        // util.print(.Info, "Procedure: {}", .{@sizeOf(node.Procedure)});
+        // util.print(.Info, "Type: {}", .{@sizeOf(node.Type)});
+        // util.print(.Info, "Identifier: {}", .{@sizeOf(node.Identifier)});
+        // util.print(.Info, "Number: {}", .{@sizeOf(node.Number)});
+        // util.print(.Info, "Node: {}", .{@sizeOf(node.Node)});
 
         return NodeManager{
             .nodes = try collections.Vec(node.Node).new(100, allocator),
@@ -175,7 +193,20 @@ const NodeManager = struct {
         };
     }
 
+    fn clear(self: *NodeManager) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "NodeManager::clear"});
+        defer zone.deinit();
+
+        self.parameters.clear();
+        self.construct_values.clear();
+        self.type_fields.clear();
+        self.nodes.clear();
+    }
+
     fn deinit(self: *NodeManager, allocator: *mem.Arena) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "NodeManager::deinit"});
+        defer zone.deinit();
+
         self.parameters.deinit(allocator);
         self.construct_values.deinit(allocator);
         self.type_fields.deinit(allocator);
@@ -189,6 +220,9 @@ pub const Parser = struct {
     arena: *mem.Arena,
 
     pub fn new(allocator: *mem.Arena) error{ OutOfBounds, OutOfMemory }!Parser {
+        const zone = util.tracy.initZone(@src(), .{.name = "Parser::new"});
+        defer zone.deinit();
+
         var self = Parser{
             .ruler = undefined,
             .manager = undefined,
@@ -207,7 +241,10 @@ pub const Parser = struct {
     }
 
     pub fn next(self: *Parser, tokenizer: *lexer.Lexer) ?node.Node {
-        self.manager.nodes.clear();
+        const zone = util.tracy.initZone(@src(), .{.name = "Parser::next"});
+        defer zone.deinit();
+
+        self.manager.clear();
 
         _ = tokenizer.next() orelse return null;
 
@@ -220,17 +257,21 @@ pub const Parser = struct {
             else => @panic("TODO: do not accept expressions here for now"),
         }
 
-        util.assert(self.manager.nodes.len >= 1);
-
         return self.manager.nodes.pop() catch @panic("TODO");
     }
 
     fn group(self: *Parser, tokenizer: *lexer.Lexer) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Parser::group"});
+        defer zone.deinit();
+
         self.parse(.Assignment, tokenizer);
         if (!tokenizer.match(token.Token.PARENTESISRIGHT)) @panic("TODO");
     }
 
     fn unary(self: *Parser, tokenizer: *lexer.Lexer) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Parser::unary"});
+        defer zone.deinit();
+
         const operator = tokenizer.previous.Operator;
         self.parse(.Unary, tokenizer);
 
@@ -242,6 +283,9 @@ pub const Parser = struct {
     }
 
     fn binary(self: *Parser, tokenizer: *lexer.Lexer) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Parser::binary"});
+        defer zone.deinit();
+
         const operator = tokenizer.previous.Operator;
 
         self.parse(
@@ -279,18 +323,27 @@ pub const Parser = struct {
     }
 
     fn identifier(self: *Parser, tokenizer: *lexer.Lexer) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Parser::identifier"});
+        defer zone.deinit();
+
         self.manager.nodes.push(node.Node{
             .Identifier = node.Identifier.new(tokenizer.previous.Identifier),
         }) catch @panic("TODO");
     }
 
     fn number(self: *Parser, tokenizer: *lexer.Lexer) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Parser::number"});
+        defer zone.deinit();
+
         self.manager.nodes.push(node.Node{ .Number = node.Number.new(
             tokenizer.previous.Number,
         ) }) catch @panic("TODO");
     }
 
     fn construct(self: *Parser, tokenizer: *lexer.Lexer) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Parser::construct"});
+        defer zone.deinit();
+
         const index = self.manager.construct_values.start() catch @panic("TODO");
 
         while (!tokenizer.match(token.Token.BRACERIGHT)) {
@@ -307,7 +360,7 @@ pub const Parser = struct {
 
             self.manager.construct_values.extend(node.Construct.Value.new(
                 name.Identifier,
-                self.manager.nodes.pop() catch @panic("TODO"),
+                @intCast(self.manager.nodes.len - 1),
             )) catch @panic("TODO");
         }
 
@@ -317,6 +370,9 @@ pub const Parser = struct {
     }
 
     fn call(self: *Parser, tokenizer: *lexer.Lexer) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Parser::call"});
+        defer zone.deinit();
+
         var len: util.Index = 0;
 
         while (!tokenizer.match(token.Token.PARENTESISRIGHT)) {
@@ -334,6 +390,9 @@ pub const Parser = struct {
     }
 
     fn typ(self: *Parser, tokenizer: *lexer.Lexer) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Parser::typ"});
+        defer zone.deinit();
+
         const name = tokenizer.current;
 
         if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
@@ -373,6 +432,9 @@ pub const Parser = struct {
     }
 
     fn property(self: *Parser, tokenizer: *lexer.Lexer) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Parser::property"});
+        defer zone.deinit();
+
         const name = tokenizer.current;
 
         if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
@@ -383,6 +445,9 @@ pub const Parser = struct {
     }
 
     fn procedure(self: *Parser, tokenizer: *lexer.Lexer) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Parser::procedure"});
+        defer zone.deinit();
+
         const name = tokenizer.current;
 
         if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
@@ -422,6 +487,9 @@ pub const Parser = struct {
     }
 
     fn let(self: *Parser, tokenizer: *lexer.Lexer) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Parser::let"});
+        defer zone.deinit();
+
         const mutable = tokenizer.match(token.Token.MUT);
         const iden = tokenizer.current;
         _ = mutable;
@@ -443,12 +511,18 @@ pub const Parser = struct {
     }
 
     fn string(self: *Parser, tokenizer: *lexer.Lexer) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Parser::string"});
+        defer zone.deinit();
+
         _ = tokenizer;
         _ = self;
         @panic("TODO");
     }
 
     fn scope(self: *Parser, tokenizer: *lexer.Lexer) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Parser::scope"});
+        defer zone.deinit();
+
         var len: util.Index = 0;
 
         while (!tokenizer.match(token.Token.BRACERIGHT)) {
@@ -461,6 +535,9 @@ pub const Parser = struct {
     }
 
     fn parse(self: *Parser, precedence: Precedence, tokenizer: *lexer.Lexer) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Parser::parse"});
+        defer zone.deinit();
+
         tokenizer.advance();
 
         if (self.ruler.from_token(tokenizer.previous).prefix) |prefix| {
@@ -468,8 +545,6 @@ pub const Parser = struct {
         } else {
             @panic("TODO: Show error");
         }
-
-        @import("std").debug.print("current: {}\n", .{tokenizer.current});
 
         var r = self.ruler.from_token(tokenizer.current);
 
@@ -486,89 +561,11 @@ pub const Parser = struct {
     }
 
     pub fn deinit(self: *Parser) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Parser::deinit"});
+        defer zone.deinit();
+
         self.ruler.deinit(self.arena);
         self.manager.deinit(self.arena);
         self.arena.deinit();
     }
 };
-
-// test "Lexer" {
-//     _ = lexer;
-// }
-
-// test "basic" {
-//     var arena = try mem.Arena.new("Testing", 3);
-//     defer arena.deinit();
-
-//     var input_file = try collections.File.open("zig-out/basic.lang");
-//     var output = try String.new(512, &arena);
-//     defer output.deinit(&arena);
-
-//     const input_stream = input_file.stream();
-//     const output_stream = collections.string_stream(&output);
-
-//     var parser = try Parser.new(input_stream, &arena);
-//     defer parser.deinit();
-
-//     while (parser.next()) {}
-
-//     parser.compile(output_stream);
-//     try util.assert(mem.equal(u8, try output.offset(0), &.{ 127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 62, 0, 1, 0, 0, 0, 129, 0, 64, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 56, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 5, 0, 0, 0, 120, 0, 0, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 184, 10, 0, 0, 0, 131, 192, 10, 195, 232, 242, 255, 255, 255, 72, 137, 199, 184, 60, 0, 0, 0, 15, 5 }));
-// }
-
-// test "binary operation" {
-//     var arena = try mem.Arena.new("Testing", 3);
-//     defer arena.deinit();
-
-//     var input_file = try collections.File.open("zig-out/binary.lang");
-//     var output = try String.new(512, &arena);
-//     defer output.deinit(&arena);
-
-//     const input_stream = input_file.stream();
-//     const output_stream = collections.string_stream(&output);
-
-//     var parser = try Parser.new(input_stream, &arena);
-//     defer parser.deinit();
-
-//     while (parser.next()) {}
-
-//     parser.compile(output_stream);
-//     try util.assert(mem.equal(u8, try output.offset(0), &.{ 127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 62, 0, 1, 0, 0, 0, 134, 0, 64, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 56, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 5, 0, 0, 0, 120, 0, 0, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 14, 0, 0, 0, 0, 0, 0, 0, 14, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 191, 10, 0, 0, 0, 131, 199, 10, 72, 137, 248, 1, 248, 195, 232, 237, 255, 255, 255, 72, 137, 199, 184, 60, 0, 0, 0, 15, 5 }));
-// }
-
-// test "function call " {
-//     var arena = try mem.Arena.new("Testing", 3);
-//     defer arena.deinit();
-
-//     var input_file = try collections.File.open("zig-out/call.lang");
-//     var output = try String.new(512, &arena);
-//     defer output.deinit(&arena);
-
-//     const input_stream = input_file.stream();
-//     const output_stream = collections.string_stream(&output);
-
-//     var parser = try Parser.new(input_stream, &arena);
-//     defer parser.deinit();
-
-//     while (parser.next()) {}
-
-//     parser.compile(output_stream);
-//     try util.assert(mem.equal(u8, try output.offset(0), &.{ 127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 62, 0, 1, 0, 0, 0, 135, 0, 64, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 56, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 5, 0, 0, 0, 120, 0, 0, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 120, 0, 64, 0, 0, 0, 0, 0, 15, 0, 0, 0, 0, 0, 0, 0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 139, 69, 0, 195, 104, 10, 0, 0, 0, 232, 242, 255, 255, 255, 195, 232, 240, 255, 255, 255, 72, 137, 199, 184, 60, 0, 0, 0, 15, 5 }));
-// }
-
-// test "type return" {
-//     var arena = try mem.Arena.new("Testing", 3);
-//     defer arena.deinit();
-
-//     var input_file = try collections.File.open("zig-out/type_return.lang");
-//     var output = try String.new(512, &arena);
-//     defer output.deinit(&arena);
-
-//     var parser = try Parser.new(input_file.stream(), &arena);
-//     defer parser.deinit();
-
-//     while (parser.next()) {}
-
-//     parser.compile(collections.string_stream(&output));
-//     try util.assert(true);
-// }
