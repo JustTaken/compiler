@@ -141,16 +141,6 @@ pub fn Array(T: type) type {
             return self.items[o..self.len];
         }
 
-        pub fn range(self: *const Self, r: util.Range) error{OutOfBounds}![]const T {
-            const zone = util.tracy.initZone(@src(), .{.name = "Array::range"});
-            defer zone.deinit();
-
-            if (r.end > self.len) return error.OutOfBounds;
-            if (r.start > r.end) return error.OutOfBounds;
-
-            return self.items[r.start..r.end];
-        }
-
         pub fn get_back(self: *const Self, o: usize) error{OutOfBounds}!T {
             const zone = util.tracy.initZone(@src(), .{.name = "Array::get_back"});
             defer zone.deinit();
@@ -319,24 +309,6 @@ pub fn Vec(T: type) type {
             return self.items[self.len..self.capacity];
         }
 
-        pub fn range(self: *const Self, r: util.Range) error{OutOfBounds}![]const T {
-            const zone = util.tracy.initZone(@src(), .{.name = "Vec::range"});
-            defer zone.deinit();
-
-            if (r.start > r.end or r.end > self.len) return error.OutOfBounds;
-
-            return self.items[r.start..r.end];
-        }
-
-        pub fn mut_range(self: *Self, r: util.Range) error{OutOfBounds}![]T {
-            const zone = util.tracy.initZone(@src(), .{.name = "Vec::mut_range"});
-            defer zone.deinit();
-
-            if (r.start > r.end or r.end > self.len) return error.OutOfBounds;
-
-            return self.items[r.start..r.end];
-        }
-
         pub fn slice(self: *const Self, s: Slice) error{OutOfBounds}![]const T {
             const zone = util.tracy.initZone(@src(), .{.name = "Vec::slice"});
             defer zone.deinit();
@@ -387,7 +359,7 @@ pub fn Vec(T: type) type {
 pub fn StringMap(T: type) type {
     return struct {
         value: [*]T,
-        key: [*][]const u8,
+        key: [*]util.Index,
         capacity: u32,
 
         const Self = @This();
@@ -396,10 +368,10 @@ pub fn StringMap(T: type) type {
             const zone = util.tracy.initZone(@src(), .{.name = "StringMap::new"});
             defer zone.deinit();
 
-            const key = try arena.alloc([]const u8, size);
             const value = try arena.alloc(T, size);
+            const key = try arena.alloc(util.Index, size);
 
-            @memset(key[0..size], "");
+            @memset(key[0..size], util.INDEX_MAX);
 
             return .{
                 .value = value,
@@ -408,26 +380,20 @@ pub fn StringMap(T: type) type {
             };
         }
 
-        pub fn push(self: *Self, key: []const u8, item: T) error{OutOfBounds}!void {
+        pub fn push(self: *Self, key: util.Index, item: T, manager: SliceManager(u8)) error{OutOfBounds}!void {
             const zone = util.tracy.initZone(@src(), .{.name = "StringMap::push"});
             defer zone.deinit();
 
-            _ = try self.put(key, item);
-        }
-
-        pub fn put(self: *Self, key: []const u8, item: T) error{OutOfBounds}!u32 {
-            const zone = util.tracy.initZone(@src(), .{.name = "StringMap::put"});
-            defer zone.deinit();
-
             if (self.capacity == 0) return error.OutOfBounds;
+            const key_string = try manager.get(key);
 
-            const h = util.hash(key);
+            const h = util.hash(key_string);
 
             var code = h % self.capacity;
             var count: u32 = 0;
 
-            while (self.key[code].len > 0 and count < self.capacity) {
-                if (mem.equal(u8, key, self.key[code])) {
+            while (self.key[code] < util.INDEX_MAX and count < self.capacity) {
+                if (mem.equal(u8, key_string, try manager.get(self.key[code]))) {
                     break;
                 }
 
@@ -439,27 +405,26 @@ pub fn StringMap(T: type) type {
 
             self.value[code] = item;
             self.key[code] = key;
-
-            return code;
         }
 
-        pub fn get(self: *const Self, key: []const u8) ?*T {
+        pub fn get(self: *const Self, key: util.Index, manager: SliceManager(u8)) error{OutOfBounds, NotFound}!?T {
             const zone = util.tracy.initZone(@src(), .{.name = "StringMap::get"});
             defer zone.deinit();
 
-            if (self.capacity == 0) return null;
+            if (self.capacity == 0) return error.OutOfBounds;
 
-            const h = util.hash(key);
+            const key_string = try manager.get(key);
+            const h = util.hash(key_string);
 
             var count: u32 = 0;
-            var code = h % self.capacity;
+            var code: util.Index = @intCast(h % self.capacity);
 
-            while (self.key[code].len > 0 and count < self.capacity) {
-                if (mem.equal(u8, key, self.key[code])) {
-                    return &self.value[code];
+            while (self.key[code] < util.INDEX_MAX and count < self.capacity) {
+                if (mem.equal(u8, key_string, try manager.get(self.key[code]))) {
+                    return self.value[code];
                 }
 
-                code = (code + 1) % self.capacity;
+                code = @intCast((code + 1) % self.capacity);
                 count += 1;
             }
 
@@ -472,8 +437,8 @@ pub fn StringMap(T: type) type {
 
             defer self.capacity = 0;
 
+            arena.destroy(util.Index, self.capacity);
             arena.destroy(T, self.capacity);
-            arena.destroy([]const u8, self.capacity);
         }
     };
 }
@@ -510,13 +475,13 @@ pub fn SliceManager(T: type) type {
             };
         }
 
-        pub fn push(self: *Self, items: []const T) error{OutOfBounds}!u8 {
+        pub fn push(self: *Self, items: []const T) error{OutOfBounds}!util.Index {
             const zone = util.tracy.initZone(@src(), .{.name = "SliceManager::push"});
             defer zone.deinit();
 
-            const index: u8 = @intCast(self.slices.len);
-            const ptr: u8 = @intCast(self.buffer.len);
-            const len: u8 = @intCast(items.len);
+            const index: util.Index = @intCast(self.slices.len);
+            const ptr: util.Index = @intCast(self.buffer.len);
+            const len: util.Index = @intCast(items.len);
 
             try self.buffer.extend(items);
             try self.slices.push(Slice.new(ptr, len));
@@ -524,7 +489,7 @@ pub fn SliceManager(T: type) type {
             return index;
         }
 
-        pub fn start(self: *Self) error{OutOfBounds}!u8 {
+        pub fn start(self: *Self) error{OutOfBounds}!util.Index {
             const zone = util.tracy.initZone(@src(), .{.name = "SliceManager::start"});
             defer zone.deinit();
 
@@ -536,7 +501,7 @@ pub fn SliceManager(T: type) type {
             return index;
         }
 
-        pub fn get(self: *const Self, index: u8) error{OutOfBounds}![]const T {
+        pub fn get(self: *const Self, index: util.Index) error{OutOfBounds}![]const T {
             const zone = util.tracy.initZone(@src(), .{.name = "SliceManager::get"});
             defer zone.deinit();
 

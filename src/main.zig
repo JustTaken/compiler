@@ -5,7 +5,7 @@ const collections = @import("collections");
 
 const Parser = @import("parser.zig").Parser;
 const Lexer = @import("lexer/mod.zig").Lexer;
-const TypeChecker = @import("checker/mod.zig").TypeChecker;
+const Checker = @import("checker/mod.zig").Checker;
 const Generator = @import("generator/mod.zig").Generator;
 
 const DEFAULT_PATH: [:0]const u8 = "a.out";
@@ -42,17 +42,17 @@ pub fn start() !void {
     var lexer = try Lexer.new(input_file.stream(), &arena);
     defer lexer.deinit();
 
-    var checker = try TypeChecker.new(&arena);
+    var parser = try Parser.new(&arena);
+    defer parser.deinit();
+
+    var checker = try Checker.new(&arena);
     defer checker.deinit();
 
     var generator = try Generator.new(&arena);
     defer generator.deinit();
 
-    var parser = try Parser.new(&arena);
-    defer parser.deinit();
-
-    while (parser.next(&lexer)) |node| {
-        _ = node;
+    while (parser.next(&lexer)) |tree| {
+        checker.next(tree, lexer.words);
     }
 
     var output_file = try collections.File.create(output);

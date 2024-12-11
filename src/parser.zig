@@ -161,62 +161,9 @@ fn Iter(T: type, F: type) type {
     };
 }
 
-
-const NodeManager = struct {
-    nodes: collections.Vec(node.Node),
-    type_fields: collections.Vec(node.Type.Field),
-    construct_values: collections.SliceManager(node.Construct.Value),
-    parameters: collections.Vec(node.Procedure.Parameter),
-
-    fn new(allocator: *mem.Arena) error{OutOfMemory}!NodeManager {
-        const zone = util.tracy.initZone(@src(), .{.name = "NodeManager::new"});
-        defer zone.deinit();
-
-        // util.print(.Info, "Scope: {}", .{@sizeOf(node.Scope)});
-        // util.print(.Info, "Construct: {}", .{@sizeOf(node.Construct)});
-        // util.print(.Info, "Let: {}", .{@sizeOf(node.Let)});
-        // util.print(.Info, "Call: {}", .{@sizeOf(node.Call)});
-        // util.print(.Info, "Binary: {}", .{@sizeOf(node.Binary)});
-        // util.print(.Info, "Unary: {}", .{@sizeOf(node.Unary)});
-        // util.print(.Info, "Property: {}", .{@sizeOf(node.Property)});
-        // util.print(.Info, "Procedure: {}", .{@sizeOf(node.Procedure)});
-        // util.print(.Info, "Type: {}", .{@sizeOf(node.Type)});
-        // util.print(.Info, "Identifier: {}", .{@sizeOf(node.Identifier)});
-        // util.print(.Info, "Number: {}", .{@sizeOf(node.Number)});
-        // util.print(.Info, "Node: {}", .{@sizeOf(node.Node)});
-
-        return NodeManager{
-            .nodes = try collections.Vec(node.Node).new(100, allocator),
-            .type_fields = try collections.Vec(node.Type.Field).new(20, allocator),
-            .construct_values = try collections.SliceManager(node.Construct.Value).new(20, allocator),
-            .parameters = try collections.Vec(node.Procedure.Parameter).new(20, allocator),
-        };
-    }
-
-    fn clear(self: *NodeManager) void {
-        const zone = util.tracy.initZone(@src(), .{.name = "NodeManager::clear"});
-        defer zone.deinit();
-
-        self.parameters.clear();
-        self.construct_values.clear();
-        self.type_fields.clear();
-        self.nodes.clear();
-    }
-
-    fn deinit(self: *NodeManager, allocator: *mem.Arena) void {
-        const zone = util.tracy.initZone(@src(), .{.name = "NodeManager::deinit"});
-        defer zone.deinit();
-
-        self.parameters.deinit(allocator);
-        self.construct_values.deinit(allocator);
-        self.type_fields.deinit(allocator);
-        self.nodes.deinit(allocator);
-    }
-};
-
 pub const Parser = struct {
     ruler: Ruler,
-    manager: NodeManager,
+    manager: node.Tree,
     arena: *mem.Arena,
 
     pub fn new(allocator: *mem.Arena) error{ OutOfBounds, OutOfMemory }!Parser {
@@ -231,7 +178,7 @@ pub const Parser = struct {
 
         errdefer self.arena.deinit();
 
-        self.manager = try NodeManager.new(self.arena);
+        self.manager = try node.Tree.new(self.arena);
         errdefer self.manager.deinit(self.arena);
 
         self.ruler = try Ruler.new(self.arena);
@@ -240,7 +187,7 @@ pub const Parser = struct {
         return self;
     }
 
-    pub fn next(self: *Parser, tokenizer: *lexer.Lexer) ?node.Node {
+    pub fn next(self: *Parser, tokenizer: *lexer.Lexer) ?*node.Tree {
         const zone = util.tracy.initZone(@src(), .{.name = "Parser::next"});
         defer zone.deinit();
 
@@ -257,7 +204,7 @@ pub const Parser = struct {
             else => @panic("TODO: do not accept expressions here for now"),
         }
 
-        return self.manager.nodes.pop() catch @panic("TODO");
+        return &self.manager;
     }
 
     fn group(self: *Parser, tokenizer: *lexer.Lexer) void {

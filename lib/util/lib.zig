@@ -6,6 +6,7 @@ pub const tracy = @import("tracy");
 pub const tracyc = tracy.c;
 
 pub const Index = u8;
+pub const INDEX_MAX: Index = 0xFF;
 
 pub const Range = struct {
     start: u32,

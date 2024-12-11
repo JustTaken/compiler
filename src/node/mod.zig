@@ -28,71 +28,6 @@ pub const Node = union(NodeKind) {
     Property: Property,
     Identifier: Identifier,
     Number: Number,
-
-    // pub fn deinit(self: Node, arena: *mem.Arena) void {
-        // const zone = util.tracy.initZone(@src(), .{.name = "Generator::deinit"});
-        // defer zone.deinit();
-
-    //     switch (self) {
-    //         .Type => |typ| {
-    //             typ.fields.deinit(arena);
-    //             arena.destroy(Type, 1);
-    //         },
-    //         .Scope => |scope| {
-    //             for (scope.childs.offset(0) catch unreachable) |node| {
-    //                 node.deinit(arena);
-    //             }
-
-    //             scope.childs.deinit(arena);
-    //             arena.destroy(Scope, 1);
-    //         },
-    //         .Procedure => |procedure| {
-    //             procedure.scope.deinit(arena);
-    //             procedure.parameters.deinit(arena);
-    //             arena.destroy(Procedure, 1);
-    //         },
-    //         .Construct => |construct| {
-    //             for (construct.values.offset(0) catch unreachable) |value| {
-    //                 value.node.deinit(arena);
-    //             }
-
-    //             construct.values.deinit(arena);
-    //             construct.name.deinit(arena);
-    //             arena.destroy(Construct, 1);
-    //         },
-    //         .Let => |let| {
-    //             let.value.deinit(arena);
-    //             arena.destroy(Let, 1);
-    //         },
-    //         .Call => |call| {
-    //             for (call.arguments.offset(0) catch unreachable) |node| {
-    //                 node.deinit(arena);
-    //             }
-
-    //             call.arguments.deinit(arena);
-    //             call.name.deinit(arena);
-    //             arena.destroy(Call, 1);
-    //         },
-    //         .Binary => |binary| {
-    //             binary.left.deinit(arena);
-    //             binary.right.deinit(arena);
-    //             arena.destroy(Binary, 1);
-    //         },
-    //         .Unary => |unary| {
-    //             unary.node.deinit(arena);
-    //             arena.destroy(Unary, 1);
-    //         },
-    //         .Property => |property| {
-    //             property.node.deinit(arena);
-    //             arena.destroy(Property, 1);
-    //         },
-    //         .Identifier => |_| {
-    //             arena.destroy(Identifier, 1);
-    //         },
-    //         .Number => {},
-
-    //     }
-    // }
 };
 
 pub const Type = struct {
@@ -279,7 +214,7 @@ pub const Unary = struct {
 pub const Binary = struct {
     op: Operator,
 
-    pub const Operator = enum(u8) { 
+    pub const Operator = enum(u8) {
         Add, Sub, Mul, Div,
         Eq, Gt, Lt,
     };
@@ -293,3 +228,56 @@ pub const Binary = struct {
         };
     }
 };
+
+pub const Tree = struct {
+    nodes: collections.Vec(Node),
+    type_fields: collections.Vec(Type.Field),
+    construct_values: collections.SliceManager(Construct.Value),
+    parameters: collections.Vec(Procedure.Parameter),
+
+    pub fn new(allocator: *mem.Arena) error{OutOfMemory}!Tree {
+        const zone = util.tracy.initZone(@src(), .{.name = "Tree::new"});
+        defer zone.deinit();
+
+        // util.print(.Info, "Scope: {}", .{@sizeOf(node.Scope)});
+        // util.print(.Info, "Construct: {}", .{@sizeOf(node.Construct)});
+        // util.print(.Info, "Let: {}", .{@sizeOf(node.Let)});
+        // util.print(.Info, "Call: {}", .{@sizeOf(node.Call)});
+        // util.print(.Info, "Binary: {}", .{@sizeOf(node.Binary)});
+        // util.print(.Info, "Unary: {}", .{@sizeOf(node.Unary)});
+        // util.print(.Info, "Property: {}", .{@sizeOf(node.Property)});
+        // util.print(.Info, "Procedure: {}", .{@sizeOf(node.Procedure)});
+        // util.print(.Info, "Type: {}", .{@sizeOf(node.Type)});
+        // util.print(.Info, "Identifier: {}", .{@sizeOf(node.Identifier)});
+        // util.print(.Info, "Number: {}", .{@sizeOf(node.Number)});
+        // util.print(.Info, "Node: {}", .{@sizeOf(node.Node)});
+
+        return Tree{
+            .nodes = try collections.Vec(Node).new(100, allocator),
+            .type_fields = try collections.Vec(Type.Field).new(20, allocator),
+            .construct_values = try collections.SliceManager(Construct.Value).new(20, allocator),
+            .parameters = try collections.Vec(Procedure.Parameter).new(20, allocator),
+        };
+    }
+
+    pub fn clear(self: *Tree) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Tree::clear"});
+        defer zone.deinit();
+
+        self.parameters.clear();
+        self.construct_values.clear();
+        self.type_fields.clear();
+        self.nodes.clear();
+    }
+
+    pub fn deinit(self: *Tree, allocator: *mem.Arena) void {
+        const zone = util.tracy.initZone(@src(), .{.name = "Tree::deinit"});
+        defer zone.deinit();
+
+        self.parameters.deinit(allocator);
+        self.construct_values.deinit(allocator);
+        self.type_fields.deinit(allocator);
+        self.nodes.deinit(allocator);
+    }
+};
+
