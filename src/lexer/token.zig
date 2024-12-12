@@ -1,21 +1,21 @@
 const util = @import("util");
 const mem = @import("mem");
 
-pub const Keyword = enum {
-    Let,
-    Type,
-    Procedure,
-    Mut,
+pub const Keyword = enum(u8) {
+    let,
+    @"type",
+    proc,
+    mut,
 
     pub fn print(self: Keyword, formater: util.Formater) void {
         const zone = util.tracy.initZone(@src(), .{.name = "Keyword::print"});
         defer zone.deinit();
 
         switch (self) {
-            .Let => formater("Keyword::Let", .{}),
-            .Type => formater("Keyword::Type", .{}),
-            .Procedure => formater("Keyword::Procedure", .{}),
-            .Mut => formater("Keyword::Mut", .{}),
+            .let => formater("Keyword::Let", .{}),
+            .@"type" => formater("Keyword::Type", .{}),
+            .proc => formater("Keyword::Procedure", .{}),
+            .mut => formater("Keyword::Mut", .{}),
         }
     }
 
@@ -23,27 +23,17 @@ pub const Keyword = enum {
         const zone = util.tracy.initZone(@src(), .{.name = "Keyword::from_string"});
         defer zone.deinit();
 
-        if (string.len <= 1) return null;
-
-        switch (string[0]) {
-            't' => {
-                if (mem.equal(u8, string[1..], "ype")) return .Type else return null;
-            },
-            'p' => {
-                if (mem.equal(u8, string[1..], "roc")) return .Procedure else return null;
-            },
-            'm' => {
-                if (mem.equal(u8, string[1..], "ut")) return .Mut else return null;
-            },
-            'l' => {
-                if (mem.equal(u8, string[1..], "et")) return .Let else return null;
-            },
-            else => return null,
+        inline for (@typeInfo(Keyword).@"enum".fields) |field| {
+            if (mem.equal(u8, string, field.name)) {
+                return @enumFromInt(field.value);
+            }
         }
+
+        return null;
     }
 };
 
-pub const Symbol = enum {
+pub const Symbol = enum(u8) {
     Equal,
     ParentesisLeft,
     ParentesisRight,
@@ -74,7 +64,7 @@ pub const Symbol = enum {
     }
 };
 
-pub const Operator = enum {
+pub const Operator = enum(u8) {
     Plus,
     Minus,
     Star,
@@ -107,7 +97,7 @@ pub const Operator = enum {
     }
 };
 
-pub const TokenKind = enum {
+pub const TokenKind = enum(u8) {
     Eof,
     Identifier,
     String,
@@ -125,22 +115,6 @@ pub const Token = union(TokenKind) {
     Keyword: Keyword,
     Symbol: Symbol,
     Operator: Operator,
-
-    // comptime {
-    //     const actual_fields = @typeInfo(TokenKind).@"enum".fields;
-    //     const expected_fields = [_] TokenKind {
-    //         .Identifier, .String, .Number, .Keyword, .Operator, .Symbol, .Eof
-    //     };
-
-    //     if (actual_fields.len != expected_fields.len) @compileError("Out of date, be carefull with updating this because of the  location")
-
-    //     for () |field| {
-    //     }
-    //     if (@intFromEnum(TokenKind.Identifier) != 0) ;
-    //     if (@intFromEnum(TokenKind.String) != 1) @compileError("Incorrect variant location");
-    //     if (@intFromEnum(TokenKind.) != 0) @compileError("Incorrect variant location");
-    //     if (@intFromEnum(TokenKind.Identifier) != 0) @compileError("Incorrect variant location");
-    // }
 
     pub const IDEN: Token = Token{ .Identifier = 0 };
     pub const NUMBER: Token = Token{ .Number = 0 };
@@ -169,13 +143,10 @@ pub const Token = union(TokenKind) {
     pub const LESS: Token = Token{ .Operator = Operator.Less };
     pub const LESSEQUAL: Token = Token{ .Operator = Operator.LessEqual };
 
-    pub const TYPE: Token = Token{ .Keyword = Keyword.Type };
-    pub const PROC: Token = Token{ .Keyword = Keyword.Procedure };
-    pub const LET: Token = Token{ .Keyword = Keyword.Let };
-    pub const MUT: Token = Token{ .Keyword = Keyword.Mut };
-    pub const OF: Token = Token{ .Keyword = Keyword.Of };
-    pub const TRUE: Token = Token{ .Keyword = Keyword.True };
-    pub const FALSE: Token = Token{ .Keyword = Keyword.False };
+    pub const TYPE: Token = Token{ .Keyword = Keyword.@"type" };
+    pub const PROC: Token = Token{ .Keyword = Keyword.procedure };
+    pub const LET: Token = Token{ .Keyword = Keyword.let };
+    pub const MUT: Token = Token{ .Keyword = Keyword.mut };
 
     pub const EOF: Token = Token.Eof;
 

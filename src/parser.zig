@@ -197,8 +197,8 @@ pub const Parser = struct {
 
         switch (tokenizer.previous) {
             .Keyword => |keyword| switch (keyword) {
-                .Procedure => self.procedure(tokenizer),
-                .Type => self.typ(tokenizer),
+                .proc => self.procedure(tokenizer),
+                .@"type" => self.typ(tokenizer),
                 else => @panic("TODO: No other statement kind is accepted for now"),
             },
             else => @panic("TODO: do not accept expressions here for now"),
