@@ -407,20 +407,19 @@ pub fn StringMap(T: type) type {
             self.key[code] = key;
         }
 
-        pub fn get(self: *const Self, key: util.Index, manager: SliceManager(u8)) error{OutOfBounds, NotFound}!?T {
+        pub fn get(self: *const Self, key: []const u8, manager: SliceManager(u8)) error{OutOfBounds, NotFound}!?T {
             const zone = util.tracy.initZone(@src(), .{.name = "StringMap::get"});
             defer zone.deinit();
 
             if (self.capacity == 0) return error.OutOfBounds;
 
-            const key_string = try manager.get(key);
-            const h = util.hash(key_string);
+            const h = util.hash(key);
 
             var count: u32 = 0;
             var code: util.Index = @intCast(h % self.capacity);
 
             while (self.key[code] < util.INDEX_MAX and count < self.capacity) {
-                if (mem.equal(u8, key_string, try manager.get(self.key[code]))) {
+                if (mem.equal(u8, key, try manager.get(self.key[code]))) {
                     return self.value[code];
                 }
 

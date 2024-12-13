@@ -54,7 +54,7 @@ const Ruler = struct {
                 I.Pair { .t = token.Token.LET, .f = Rule.new(Parser.let, null, .Declaration), },
                 I.Pair { .t = token.Token.PARENTESISLEFT, .f = Rule.new(Parser.group, Parser.call, .Call), },
                 I.Pair { .t = token.Token.BRACELEFT, .f = Rule.new(Parser.scope, Parser.construct, .Assignment), },
-                I.Pair { .t = token.Token.DOT, .f = Rule.new(null, Parser.property, .Call) },
+                I.Pair { .t = token.Token.DOUBLEDOUBLECOLON, .f = Rule.new(null, Parser.property, .Call) },
                 I.Pair { .t = token.Token.MINUS, .f = Rule.new(Parser.unary, Parser.binary, .Term), },
                 I.Pair { .t = token.Token.PLUS, .f = Rule.new(null, Parser.binary, .Term), },
                 I.Pair { .t = token.Token.BANG, .f = Rule.new(Parser.unary, null, .Equality), },
@@ -444,7 +444,7 @@ pub const Parser = struct {
         if (!tokenizer.match(token.Token.IDEN)) @panic("TODO");
         if (!tokenizer.match(token.Token.DOUBLECOLON)) @panic("TODO");
 
-        self.parse(.Assignment, tokenizer);
+        self.parse(.Call, tokenizer);
 
         if (!tokenizer.match(token.Token.EQUAL)) @panic("TODO");
 

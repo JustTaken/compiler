@@ -180,7 +180,6 @@ pub const Call = struct {
 };
 
 pub const Property = struct {
-    // node: util.Index,
     name: util.Index,
 
     pub fn new(name: util.Index) Property {

@@ -1,5 +1,5 @@
 type i32 = 4;
 
 proc main(): i32 {
-  0
+    0
 }

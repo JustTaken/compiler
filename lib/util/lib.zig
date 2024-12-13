@@ -420,7 +420,7 @@ pub fn hash(string: []const u8) u32 {
     return @intCast(h);
 }
 
-pub fn parse(string: []const u8) usize {
+pub fn parse(string: []const u8) !usize {
     const zone = tracy.initZone(@src(), .{.name = "util::parse"});
     defer zone.deinit();
 
@@ -428,7 +428,11 @@ pub fn parse(string: []const u8) usize {
     var multiply: usize = 1;
 
     for (0..string.len) |i| {
-        number += multiply * (string[string.len - i - 1] - '0');
+        const c = string[string.len - i - 1];
+
+        if (!is_digit(c)) return error.NotANumber;
+
+        number += multiply * (c - '0');
         multiply *= 10;
     }
 

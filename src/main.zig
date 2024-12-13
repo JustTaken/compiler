@@ -18,17 +18,16 @@ pub fn start() !void {
     util.tracy.setThreadName("Main");
     defer util.tracy.message("Shutdown");
 
-    std.time.sleep(100000000);
+    std.time.sleep(1000_000_000);
 
     const zone = util.tracy.initZone(@src(), .{.name = "Main"});
     defer zone.deinit();
 
     const command_line = try util.CommandLineArgument.new();
-
-    util.Logger.level = command_line.log;
-
     const input = command_line.input_path orelse return error.MissingInputFile;
     const output = command_line.output_path orelse DEFAULT_PATH;
+
+    util.Logger.level = command_line.log;
 
     var arena = try mem.Arena.new("Main", 5);
     defer arena.deinit();

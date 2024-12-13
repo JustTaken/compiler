@@ -39,11 +39,11 @@ pub const Symbol = enum(u8) {
     ParentesisRight,
     Semicolon,
     DoubleColon,
+    DoubleDoubleColon,
     CurlyBracketLeft,
     CurlyBracketRight,
     Comma,
     Arrow,
-    Dot,
 
     pub fn print(self: Symbol, formater: util.Formater) void {
         const zone = util.tracy.initZone(@src(), .{.name = "Symbol::print"});
@@ -55,11 +55,11 @@ pub const Symbol = enum(u8) {
             .ParentesisRight => formater("Symbol::ParentesisRight", .{}),
             .Semicolon => formater("Symbol::Semicolon", .{}),
             .DoubleColon => formater("Symbol::DoubleColon", .{}),
+            .DoubleDoubleColon => formater("Symbol::DoubleDoubleColon", .{}),
             .CurlyBracketLeft => formater("Symbol::CurlyBracketLeft", .{}),
             .CurlyBracketRight => formater("Symbol::CurlyBracketRight", .{}),
             .Comma => formater("Symbol::Comma", .{}),
             .Arrow => formater("Symbol::Arrow", .{}),
-            .Dot => formater("Symbol::Dot", .{}),
         }
     }
 };
@@ -125,6 +125,7 @@ pub const Token = union(TokenKind) {
     pub const COMMA: Token = Token{ .Symbol = Symbol.Comma };
     pub const DOT: Token = Token{ .Symbol = Symbol.Dot };
     pub const DOUBLECOLON: Token = Token{ .Symbol = Symbol.DoubleColon };
+    pub const DOUBLEDOUBLECOLON: Token = Token{ .Symbol = Symbol.DoubleDoubleColon };
     pub const BRACELEFT: Token = Token{ .Symbol = Symbol.CurlyBracketLeft };
     pub const BRACERIGHT: Token = Token{ .Symbol = Symbol.CurlyBracketRight };
     pub const EQUAL: Token = Token{ .Symbol = Symbol.Equal };

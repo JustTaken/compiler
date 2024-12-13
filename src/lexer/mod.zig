@@ -39,7 +39,7 @@ pub const Lexer = struct {
 
         const free_space = self.arena.capacity - self.arena.usage;
 
-        self.words = try collections.SliceManager(u8).new(free_space >> 2, self.arena);
+        self.words = try collections.SliceManager(u8).new(free_space / 3 - 2, self.arena);
         errdefer self.words.deinit(self.arena);
 
         self.content = try collections.String.new(free_space >> 1, self.arena);
@@ -134,12 +134,17 @@ pub const Lexer = struct {
                     '{' => self.current = token.Token{ .Symbol = token.Symbol.CurlyBracketLeft },
                     '}' => self.current = token.Token{ .Symbol = token.Symbol.CurlyBracketRight },
                     ';' => self.current = token.Token{ .Symbol = token.Symbol.Semicolon },
-                    ':' => self.current = token.Token{ .Symbol = token.Symbol.DoubleColon },
                     ',' => self.current = token.Token{ .Symbol = token.Symbol.Comma },
-                    '.' => self.current = token.Token{ .Symbol = token.Symbol.Dot },
                     '-' => self.current = token.Token{ .Operator = token.Operator.Minus },
                     '+' => self.current = token.Token{ .Operator = token.Operator.Plus },
                     '*' => self.current = token.Token{ .Operator = token.Operator.Star },
+                    ':' => {
+                        if (self.assert(':')) {
+                            self.current = token.Token{ .Symbol = token.Symbol.DoubleDoubleColon };
+                        } else {
+                            self.current = token.Token{ .Symbol = token.Symbol.DoubleColon };
+                        }
+                    },
                     '/' => {
                         if (self.assert('/')) {
                             while (!self.at_end() and self.content.value(self.offset) catch unreachable != '\n') {
